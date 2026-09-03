@@ -1,10 +1,10 @@
 extends Node
 
-# Desktop movement fallback. Uses keyboard events instead of relying on InputMap.
-# This makes WASD independent from stale or broken action-map entries.
+# Sole desktop movement controller.
+# WASD moves the character. The mouse controls the camera only.
 
 const PLAYER_SPEED := 7.0
-const PLAYER_ACCEL := 24.0
+const PLAYER_ACCEL := 30.0
 const GRAVITY := 22.0
 
 var player: CharacterBody3D
@@ -22,16 +22,28 @@ var _diagnostic_timer := 0.0
 func _ready() -> void:
     process_mode = Node.PROCESS_MODE_ALWAYS
     process_priority = 100
-    _log("INPUT_FALLBACK_READY", {"mode": "event_driven", "keys": "WASD"})
+    # game_runtime used to move the player as well. Disable only its physics
+    # callback so this controller is the single source of character movement.
+    call_deferred("_disable_runtime_movement")
+    _log("INPUT_FALLBACK_READY", {"mode": "WASD_ONLY", "camera": "MOUSE_ONLY"})
+
+func _disable_runtime_movement() -> void:
+    var runtime := get_tree().current_scene
+    if runtime != null and runtime.has_method("_move_player"):
+        runtime.set_physics_process(false)
+        _log("RUNTIME_MOVEMENT_DISABLED", {})
 
 func _input(event: InputEvent) -> void:
-    if event is not InputEventKey:
+    if not event is InputEventKey:
         return
     var key := event as InputEventKey
     if key.echo:
         return
+
     var pressed := key.pressed
-    match key.physical_keycode:
+    # Use logical key codes: WASD means the actual W/A/S/D keys, independent
+    # of the physical position of keys on an AZERTY keyboard.
+    match key.keycode:
         KEY_W:
             key_w = pressed
         KEY_A:
@@ -41,8 +53,8 @@ func _input(event: InputEvent) -> void:
         KEY_D:
             key_d = pressed
 
-    if pressed and key.physical_keycode in [KEY_W, KEY_A, KEY_S, KEY_D]:
-        _log("INPUT_KEY_DOWN", {"key": OS.get_keycode_string(key.physical_keycode)})
+    if pressed and key.keycode in [KEY_W, KEY_A, KEY_S, KEY_D]:
+        _log("INPUT_KEY_DOWN", {"key": OS.get_keycode_string(key.keycode)})
 
 func _physics_process(delta: float) -> void:
     if player == null or not is_instance_valid(player):
@@ -52,8 +64,6 @@ func _physics_process(delta: float) -> void:
             _last_position = player.global_position
             _log("INPUT_PLAYER_FOUND", {"position": str(player.global_position)})
 
-    # The player is created before its CameraPivot by game_runtime.gd, so the
-    # camera must be resolved independently after the player exists.
     if camera_pivot == null or not is_instance_valid(camera_pivot):
         camera_pivot = _find_camera_pivot()
         if camera_pivot != null and not _reported_camera:
@@ -63,23 +73,34 @@ func _physics_process(delta: float) -> void:
     if player == null or camera_pivot == null:
         return
 
+    # Poll the engine state as well as the key events. This avoids losing a
+    # key-up/down event when a Control node has keyboard focus.
+    var live_w := Input.is_key_pressed(KEY_W)
+    var live_a := Input.is_key_pressed(KEY_A)
+    var live_s := Input.is_key_pressed(KEY_S)
+    var live_d := Input.is_key_pressed(KEY_D)
+
     var input := Vector2(
-        float(int(key_d) - int(key_a)),
-        float(int(key_w) - int(key_s))
+        float(int(key_d or live_d) - int(key_a or live_a)),
+        float(int(key_w or live_w) - int(key_s or live_s))
     )
     if input.length() > 1.0:
         input = input.normalized()
-
-    if input.length() <= 0.01:
-        return
 
     var forward := -camera_pivot.global_transform.basis.z
     var right := camera_pivot.global_transform.basis.x
     forward.y = 0.0
     right.y = 0.0
-    forward = forward.normalized()
-    right = right.normalized()
-    var direction := (right * input.x + forward * input.y).normalized()
+    if forward.length_squared() > 0.001:
+        forward = forward.normalized()
+    if right.length_squared() > 0.001:
+        right = right.normalized()
+
+    # WASD controls the character relative to the camera direction.
+    # No keyboard input is used to rotate the camera.
+    var direction := right * input.x + forward * input.y
+    if direction.length_squared() > 1.0:
+        direction = direction.normalized()
 
     var target_velocity := direction * PLAYER_SPEED
     player.velocity.x = move_toward(player.velocity.x, target_velocity.x, PLAYER_ACCEL * delta)
@@ -103,13 +124,16 @@ func _physics_process(delta: float) -> void:
     if _diagnostic_timer >= 2.0:
         _diagnostic_timer = 0.0
         _log("INPUT_STATE", {
-            "keys": {"w": key_w, "a": key_a, "s": key_s, "d": key_d},
+            "keys": {"w": live_w, "a": live_a, "s": live_s, "d": live_d},
             "position": str(pos),
             "velocity": str(player.velocity)
         })
 
-    var desired := atan2(direction.x, direction.z)
-    player.rotation.y = lerp_angle(player.rotation.y, desired, 0.16)
+    # Character rotation follows movement direction. Camera rotation remains
+    # entirely controlled by the mouse in game_runtime.gd.
+    if direction.length_squared() > 0.01:
+        var desired := atan2(direction.x, direction.z)
+        player.rotation.y = lerp_angle(player.rotation.y, desired, 0.16)
 
 func _find_player() -> CharacterBody3D:
     var root := get_tree().root

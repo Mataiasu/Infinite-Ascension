@@ -18,6 +18,7 @@ move_right={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":68)
 
 [autoload]
 SaveManager="*res://scripts/save_manager.gd"
+GameLogger="*res://scripts/game_logger.gd"
 
 [rendering]
 renderer/rendering_method="gl_compatibility"

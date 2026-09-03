@@ -63,20 +63,19 @@ jobs:
           retention-days: 7
 
   launcher-windows:
-    name: Build Windows launcher
+    name: Build native Windows launcher
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
         with:
-          python-version: '3.12'
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r launcher/requirements.txt
-      - name: Build launcher (onedir)
-        run: pyinstaller --clean --noconfirm --onedir --windowed --name Infinite-Ascension-Launcher launcher/launcher.py
-      - name: Package launcher
+          dotnet-version: '8.0.x'
+      - name: Publish native launcher
+        run: dotnet publish launcher/windows/InfiniteAscensionLauncher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o dist/launcher-windows
+      - name: Package Windows launcher
         shell: pwsh
-        run: Compress-Archive -Path dist/Infinite-Ascension-Launcher/* -DestinationPath dist/Infinite-Ascension-Launcher-Windows.zip -Force
+        run: Compress-Archive -Path dist/launcher-windows/* -DestinationPath dist/Infinite-Ascension-Launcher-Windows.zip -Force
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-windows
@@ -149,7 +148,7 @@ jobs:
           gh release create latest \
             --repo "$GITHUB_REPOSITORY" \
             --title "Infinite Ascension — Latest build #${GITHUB_RUN_NUMBER}" \
-            --notes "Build automatique du push ${GITHUB_SHA}. Le launcher vérifie et installe automatiquement la dernière version du jeu." \
+            --notes "Build automatique du push ${GITHUB_SHA}. Le launcher Windows est natif et le jeu est lancé directement, sans Godot." \
             release/Infinite-Ascension-Windows.zip \
             release/Infinite-Ascension-Linux.zip \
             release/Infinite-Ascension-Launcher-Windows.zip \

@@ -40,6 +40,7 @@ internal sealed class LauncherForm : Form
     private string LogsDir => Path.Combine(RootDir, "Logs");
     private string LauncherLog => Path.Combine(LogsDir, "launcher.log");
     private string GameLog => Path.Combine(LogsDir, "game.log");
+    private string LogEndpointPath => Path.Combine(RootDir, "log_endpoint.txt");
 
     public LauncherForm()
     {
@@ -168,17 +169,14 @@ internal sealed class LauncherForm : Form
             using var doc = JsonDocument.Parse(File.ReadAllText(StatePath));
             return doc.RootElement.GetProperty("build").GetInt32();
         }
-        catch
-        {
-            return 0;
-        }
+        catch { return 0; }
     }
 
     private async Task<JsonDocument> GetManifestAsync()
     {
         var url = $"{ManifestUrl}?t={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/4.0");
+        request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/5.0");
         request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
         LogLauncher($"Lecture du manifeste : {url}");
         using var response = await http.SendAsync(request);
@@ -253,7 +251,7 @@ internal sealed class LauncherForm : Form
             progress.Value = 0;
             using (var request = new HttpRequestMessage(HttpMethod.Get, url))
             {
-                request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/4.0");
+                request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/5.0");
                 using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                 response.EnsureSuccessStatusCode();
                 var total = response.Content.Headers.ContentLength ?? 0;
@@ -318,6 +316,7 @@ internal sealed class LauncherForm : Form
             File.WriteAllText(GameLog, $"=== Infinite Ascension game log {DateTime.Now:yyyy-MM-dd HH:mm:ss} ==={Environment.NewLine}", Encoding.UTF8);
             LogLauncher($"Lancement du jeu : {GamePath}");
 
+            var sessionId = Guid.NewGuid().ToString("N");
             var psi = new ProcessStartInfo
             {
                 FileName = GamePath,
@@ -333,17 +332,7 @@ internal sealed class LauncherForm : Form
             var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             process.OutputDataReceived += (_, e) => { if (e.Data != null) LogGame("STDOUT", e.Data); };
             process.ErrorDataReceived += (_, e) => { if (e.Data != null) LogGame("STDERR", e.Data); };
-            process.Exited += (_, _) =>
-            {
-                LogLauncher($"Jeu terminé avec code {process.ExitCode}.");
-                BeginInvoke(() =>
-                {
-                    if (IsDisposed) return;
-                    status.Text = $"Jeu fermé · code {process.ExitCode}. Consultez JOURNAUX pour le diagnostic.";
-                    SetButtons(true);
-                });
-                process.Dispose();
-            };
+            process.Exited += async (_, _) => await HandleGameExitAsync(process, sessionId);
 
             process.Start();
             process.BeginOutputReadLine();
@@ -359,6 +348,86 @@ internal sealed class LauncherForm : Form
         }
     }
 
+    private async Task HandleGameExitAsync(Process process, string sessionId)
+    {
+        int exitCode = -1;
+        try
+        {
+            // WaitForExit ensures asynchronous stdout/stderr events have been drained before reading the log.
+            process.WaitForExit();
+            exitCode = process.ExitCode;
+            LogLauncher($"Jeu terminé avec code {exitCode}.");
+            await UploadSessionLogAsync(sessionId, exitCode);
+        }
+        catch (Exception ex)
+        {
+            LogLauncher($"ERREUR fin de session : {ex}");
+        }
+        finally
+        {
+            process.Dispose();
+            try
+            {
+                BeginInvoke(() =>
+                {
+                    if (IsDisposed) return;
+                    status.Text = $"Jeu fermé · code {exitCode}. Logs enregistrés.";
+                    SetButtons(true);
+                });
+            }
+            catch { }
+        }
+    }
+
+    private string? GetLogEndpoint()
+    {
+        var endpoint = Environment.GetEnvironmentVariable("INFINITE_ASCENSION_LOG_ENDPOINT");
+        if (string.IsNullOrWhiteSpace(endpoint) && File.Exists(LogEndpointPath))
+            endpoint = File.ReadAllText(LogEndpointPath, Encoding.UTF8).Trim();
+        return string.IsNullOrWhiteSpace(endpoint) ? null : endpoint.Trim();
+    }
+
+    private async Task UploadSessionLogAsync(string sessionId, int exitCode)
+    {
+        var endpoint = GetLogEndpoint();
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            LogLauncher("Upload des logs ignoré : endpoint non configuré.");
+            return;
+        }
+
+        try
+        {
+            var log = File.Exists(GameLog) ? await File.ReadAllTextAsync(GameLog, Encoding.UTF8) : "";
+            var payload = JsonSerializer.Serialize(new
+            {
+                build = LocalBuild(),
+                session = sessionId,
+                exitCode,
+                launcherVersion = "5.0",
+                os = Environment.OSVersion.VersionString,
+                machine = Environment.MachineName,
+                closedAtUtc = DateTimeOffset.UtcNow,
+                log
+            });
+
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+            request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/5.0");
+            using var response = await http.SendAsync(request);
+            var responseText = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"HTTP {(int)response.StatusCode}: {responseText}");
+
+            LogLauncher("Upload automatique du log réussi.");
+        }
+        catch (Exception ex)
+        {
+            // Logging must never prevent the player from closing the game/launcher.
+            LogLauncher($"Upload automatique du log échoué : {ex.Message}");
+        }
+    }
+
     private void OpenLogs()
     {
         try
@@ -367,7 +436,8 @@ internal sealed class LauncherForm : Form
             File.WriteAllText(Path.Combine(LogsDir, "README.txt"),
                 "Infinite Ascension — journaux\r\n\r\n" +
                 "launcher.log = journal du launcher\r\n" +
-                "game.log = sortie stdout/stderr du jeu, utile pour diagnostiquer les écrans gris/erreurs Godot\r\n", Encoding.UTF8);
+                "game.log = sortie stdout/stderr du jeu, utile pour diagnostiquer les erreurs Godot\r\n\r\n" +
+                "L'upload automatique est configuré via INFINITE_ASCENSION_LOG_ENDPOINT ou log_endpoint.txt.\r\n", Encoding.UTF8);
             Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = $"\"{LogsDir}\"", UseShellExecute = true });
         }
         catch (Exception ex)

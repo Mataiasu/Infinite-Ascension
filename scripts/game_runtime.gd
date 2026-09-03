@@ -1,403 +1,537 @@
 extends Node3D
 
-# Infinite Ascension v0.7 — clean runtime
-const XP_PER_LEVEL: float = 100.0
-const REBORN_LEVEL: int = 25
-const MAX_ENEMIES: int = 8
+# Infinite Ascension — playable vertical slice
+# Third-person exploration, WASD movement, mouse camera, enemies, auto-combat,
+# XP/levels, Reborn progression, procedural scenery and local save.
 
-var level: int = 5
-var xp: float = 0.0
-var reborn: int = 0
-var power: float = 120.0
-var hp: float = 100.0
-var max_hp: float = 100.0
-var gold: int = 250
-var kills: int = 0
-var total_damage: int = 0
-var group_levels: Array[int] = [5, 4, 6]
-var frontier_min: int = 5
-var frontier_max: int = 10
-var world_tier: int = 1
-var zone_index: int = 0
-var combat_timer: float = 0.0
-var spawn_timer: float = 0.0
-var enemy_attack_timer: float = 0.0
-var autosave_timer: float = 0.0
-var last_loot: String = "—"
-var last_target: String = "—"
-var enemies: Array[Node3D] = []
+const XP_PER_LEVEL := 100.0
+const REBORN_LEVEL := 25
+const PLAYER_SPEED := 7.0
+const PLAYER_ACCEL := 24.0
+const GRAVITY := 22.0
+const ATTACK_INTERVAL := 1.0
+const ATTACK_RANGE := 4.0
+const ENEMY_ATTACK_RANGE := 2.2
+const MAX_ENEMIES := 12
+const WORLD_SIZE := 110.0
 
-var zone_names: Array[String] = ["Forêt des Brumes", "Vallée des Cendres", "Cité Fracturée", "Océan Céleste", "Royaume Mécanique", "Abysses Stellaires", "Frontière Infinie"]
-var zone_biomes: Array[String] = ["Sylvestre", "Volcanique", "Ruines", "Aérien", "Mécanique", "Cosmique", "Inconnu"]
-var zone_colors: Array[Color] = [Color("#24412f"), Color("#4b2921"), Color("#29263d"), Color("#283b52"), Color("#29383a"), Color("#302348"), Color("#211934")]
+var level := 1
+var xp := 0.0
+var reborn := 0
+var power := 25.0
+var hp := 100.0
+var max_hp := 100.0
+var gold := 50
+var kills := 0
+var total_damage := 0
+var frontier_min := 1
+var frontier_max := 5
+var zone_index := 0
 
 var player: CharacterBody3D
+var camera_pivot: Node3D
 var camera: Camera3D
-var ui: CanvasLayer
+var enemies: Array[Node3D] = []
+var attack_timer := 0.0
+var enemy_attack_timer := 0.0
+var spawn_timer := 0.0
+var autosave_timer := 0.0
+var mouse_captured := true
+var last_message := "Explore le monde."
+
+var zone_names := ["Forêt des Brumes", "Vallée des Cendres", "Cité Fracturée", "Océan Céleste", "Royaume Mécanique", "Abysses Stellaires", "Frontière Infinie"]
+var zone_biomes := ["Sylvestre", "Volcanique", "Ruines", "Aérien", "Mécanique", "Cosmique", "Inconnu"]
+var zone_colors := [Color("#193226"), Color("#3a211b"), Color("#29243a"), Color("#243a50"), Color("#283738"), Color("#302144"), Color("#20182f")]
+
 var level_label: Label
-var hp_bar: ProgressBar
-var xp_bar: ProgressBar
-var stats_label: Label
+var hp_label: Label
+var xp_label: Label
 var zone_label: Label
-var frontier_label: Label
 var combat_label: Label
-var loot_label: Label
-var ai_label: Label
-var save_label: Label
-var log_box: RichTextLabel
+var stats_label: Label
+var hint_label: Label
+var message_label: Label
 var reborn_button: Button
+var crosshair: Label
 
 func _ready() -> void:
     randomize()
+    Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+    _build_world()
     _build_player()
     _build_camera()
     _build_hud()
     _load_save()
     _update_frontier()
     _apply_zone_visuals()
-    _spawn_wave()
-    _log("Infinite Ascension v0.7 lancé.")
-    _log("Diagnostic : le launcher capture stdout/stderr dans game.log.")
+    _spawn_initial_enemies()
     _refresh_hud()
+    _message("Infinite Ascension — exploration libre")
 
 func _process(delta: float) -> void:
     _move_player(delta)
+    _move_enemies(delta)
     _auto_combat(delta)
     _enemy_attacks(delta)
     _spawn_loop(delta)
-    _passive_income(delta)
     _autosave(delta)
+    _update_camera()
     _refresh_hud()
+
+func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventMouseMotion and mouse_captured:
+        camera_pivot.rotate_y(-event.relative.x * 0.004)
+        camera.rotation.x = clamp(camera.rotation.x - event.relative.y * 0.003, deg_to_rad(-65), deg_to_rad(20))
+    elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+        mouse_captured = not mouse_captured
+        Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mouse_captured else Input.MOUSE_MODE_VISIBLE
+    elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and not mouse_captured:
+        mouse_captured = true
+        Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _build_world() -> void:
+    var ground := StaticBody3D.new()
+    ground.name = "WorldGround"
+    add_child(ground)
+
+    var mesh_instance := MeshInstance3D.new()
+    var plane := PlaneMesh.new()
+    plane.size = Vector2(WORLD_SIZE, WORLD_SIZE)
+    mesh_instance.mesh = plane
+    var mat := StandardMaterial3D.new()
+    mat.albedo_color = zone_colors[0]
+    mat.roughness = 1.0
+    mesh_instance.material_override = mat
+    ground.add_child(mesh_instance)
+
+    var shape := CollisionShape3D.new()
+    var box := BoxShape3D.new()
+    box.size = Vector3(WORLD_SIZE, 0.2, WORLD_SIZE)
+    shape.shape = box
+    shape.position.y = -0.1
+    ground.add_child(shape)
+
+    # A simple procedural world: trees, rocks and glowing crystals.
+    for i in range(95):
+        var p := Vector3(randf_range(-WORLD_SIZE * 0.47, WORLD_SIZE * 0.47), 0, randf_range(-WORLD_SIZE * 0.47, WORLD_SIZE * 0.47))
+        if p.length() < 8.0:
+            continue
+        _create_tree(p, randf_range(0.8, 1.35)) if i % 3 != 0 else _create_rock(p)
+
+    for i in range(14):
+        var p := Vector3(randf_range(-45, 45), 0, randf_range(-45, 45))
+        if p.length() < 10:
+            continue
+        _create_crystal(p)
+
+func _create_tree(pos: Vector3, scale_value: float) -> void:
+    var root := Node3D.new()
+    root.position = pos
+    root.scale = Vector3.ONE * scale_value
+    add_child(root)
+
+    var trunk := MeshInstance3D.new()
+    var cylinder := CylinderMesh.new()
+    cylinder.height = 2.8
+    cylinder.top_radius = 0.22
+    cylinder.bottom_radius = 0.35
+    trunk.mesh = cylinder
+    var trunk_mat := StandardMaterial3D.new()
+    trunk_mat.albedo_color = Color("#35261d")
+    trunk.material_override = trunk_mat
+    trunk.position.y = 1.4
+    root.add_child(trunk)
+
+    var crown := MeshInstance3D.new()
+    var cone := SphereMesh.new()
+    cone.height = 3.8
+    cone.radius = 1.5
+    crown.mesh = cone
+    var leaf_mat := StandardMaterial3D.new()
+    leaf_mat.albedo_color = Color("#2e6b4a")
+    crown.material_override = leaf_mat
+    crown.position.y = 3.4
+    root.add_child(crown)
+
+func _create_rock(pos: Vector3) -> void:
+    var rock := MeshInstance3D.new()
+    var sphere := SphereMesh.new()
+    sphere.height = randf_range(0.7, 1.8)
+    sphere.radius = randf_range(0.5, 1.2)
+    rock.mesh = sphere
+    rock.position = pos + Vector3(0, sphere.height * 0.5, 0)
+    rock.scale.x = randf_range(0.7, 1.5)
+    var mat := StandardMaterial3D.new()
+    mat.albedo_color = Color("#42485b")
+    mat.roughness = 0.9
+    rock.material_override = mat
+    add_child(rock)
+
+func _create_crystal(pos: Vector3) -> void:
+    var crystal := MeshInstance3D.new()
+    var prism := PrismMesh.new()
+    prism.size = Vector3(0.5, 1.8, 0.5)
+    crystal.mesh = prism
+    crystal.position = pos + Vector3(0, 0.9, 0)
+    var mat := StandardMaterial3D.new()
+    mat.albedo_color = Color("#8f63ff")
+    mat.emission_enabled = true
+    mat.emission = Color("#6c37b8")
+    mat.emission_energy_multiplier = 2.0
+    crystal.material_override = mat
+    add_child(crystal)
 
 func _build_player() -> void:
     player = CharacterBody3D.new()
     player.name = "Player"
-    player.position = Vector3(0, 1, 0)
+    player.position = Vector3(0, 1.0, 0)
     add_child(player)
+
+    var collision := CollisionShape3D.new()
+    var capsule_shape := CapsuleShape3D.new()
+    capsule_shape.height = 1.8
+    capsule_shape.radius = 0.42
+    collision.shape = capsule_shape
+    player.add_child(collision)
+
     var mesh := MeshInstance3D.new()
     var capsule := CapsuleMesh.new()
     capsule.height = 1.8
     capsule.radius = 0.42
     mesh.mesh = capsule
-    var material := StandardMaterial3D.new()
-    material.albedo_color = Color("#a66cff")
-    material.emission_enabled = true
-    material.emission = Color("#6c37b8")
-    material.emission_energy_multiplier = 1.5
-    mesh.material_override = material
+    var mat := StandardMaterial3D.new()
+    mat.albedo_color = Color("#a66cff")
+    mat.emission_enabled = true
+    mat.emission = Color("#542b91")
+    mat.emission_energy_multiplier = 1.2
+    mesh.material_override = mat
+    mesh.position.y = 0.9
     player.add_child(mesh)
 
+    var light := OmniLight3D.new()
+    light.light_color = Color("#a66cff")
+    light.light_energy = 0.8
+    light.omni_range = 6.0
+    light.position.y = 1.2
+    player.add_child(light)
+
 func _build_camera() -> void:
+    camera_pivot = Node3D.new()
+    camera_pivot.name = "CameraPivot"
+    player.add_child(camera_pivot)
+    camera_pivot.position.y = 1.5
+
     camera = Camera3D.new()
-    camera.position = Vector3(0, 16, 16)
-    camera.rotation_degrees = Vector3(-45, 0, 0)
+    camera.position = Vector3(0, 4.0, 8.5)
+    camera.rotation_degrees.x = -14.0
     camera.current = true
-    player.add_child(camera)
+    camera.fov = 72.0
+    camera_pivot.add_child(camera)
 
-func _panel_style(bg: Color) -> StyleBoxFlat:
-    var style := StyleBoxFlat.new()
-    style.bg_color = bg
-    style.border_color = Color("#2d3858")
-    style.set_border_width_all(1)
-    style.set_corner_radius_all(14)
-    style.content_margin_left = 14
-    style.content_margin_right = 14
-    style.content_margin_top = 10
-    style.content_margin_bottom = 10
-    return style
+func _update_camera() -> void:
+    camera.position = camera.position.lerp(Vector3(0, 4.0, 8.5), 0.12)
 
-func _make_label(text: String, size: int, color: Color) -> Label:
-    var label := Label.new()
-    label.text = text
-    label.add_theme_font_size_override("font_size", size)
-    label.add_theme_color_override("font_color", color)
-    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    return label
-
-func _build_hud() -> void:
-    ui = CanvasLayer.new()
-    add_child(ui)
-    var root := MarginContainer.new()
-    root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    root.add_theme_constant_override("margin_left", 18)
-    root.add_theme_constant_override("margin_right", 18)
-    root.add_theme_constant_override("margin_top", 16)
-    root.add_theme_constant_override("margin_bottom", 16)
-    ui.add_child(root)
-    var columns := HBoxContainer.new()
-    columns.add_theme_constant_override("separation", 12)
-    root.add_child(columns)
-
-    var left := VBoxContainer.new()
-    left.custom_minimum_size.x = 270
-    left.add_theme_constant_override("separation", 10)
-    columns.add_child(left)
-    var title := PanelContainer.new()
-    title.add_theme_stylebox_override("panel", _panel_style(Color("#101426dd")))
-    left.add_child(title)
-    var title_box := VBoxContainer.new(); title.add_child(title_box)
-    title_box.add_child(_make_label("INFINITE", 22, Color("#eef1ff")))
-    title_box.add_child(_make_label("ASCENSION", 12, Color("#b47aff")))
-    title_box.add_child(_make_label("Vertical Slice · v0.7", 10, Color("#8f99b8")))
-
-    var stats := PanelContainer.new()
-    stats.add_theme_stylebox_override("panel", _panel_style(Color("#111725dd")))
-    left.add_child(stats)
-    var stat_box := VBoxContainer.new(); stats.add_child(stat_box)
-    level_label = _make_label("", 18, Color("#f0f2ff")); stat_box.add_child(level_label)
-    hp_bar = ProgressBar.new(); hp_bar.show_percentage = false; hp_bar.custom_minimum_size.y = 10; stat_box.add_child(hp_bar)
-    xp_bar = ProgressBar.new(); xp_bar.show_percentage = false; xp_bar.custom_minimum_size.y = 10; stat_box.add_child(xp_bar)
-    stats_label = _make_label("", 11, Color("#9aa4c3")); stat_box.add_child(stats_label)
-
-    var reborn_panel := PanelContainer.new()
-    reborn_panel.add_theme_stylebox_override("panel", _panel_style(Color("#171125dd")))
-    left.add_child(reborn_panel)
-    var reborn_box := VBoxContainer.new(); reborn_panel.add_child(reborn_box)
-    reborn_box.add_child(_make_label("REBORN", 12, Color("#dfe4ff")))
-    loot_label = _make_label("", 11, Color("#a9b0c9")); reborn_box.add_child(loot_label)
-    reborn_button = Button.new()
-    reborn_button.text = "↻ Reborn — niveau 25"
-    reborn_button.custom_minimum_size.y = 48
-    reborn_button.pressed.connect(_reborn)
-    reborn_box.add_child(reborn_button)
-
-    var center := VBoxContainer.new()
-    center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    center.add_theme_constant_override("separation", 10)
-    columns.add_child(center)
-    var world := PanelContainer.new()
-    world.add_theme_stylebox_override("panel", _panel_style(Color("#101525dd")))
-    center.add_child(world)
-    var wb := VBoxContainer.new(); world.add_child(wb)
-    zone_label = _make_label("", 20, Color("#eef1ff")); wb.add_child(zone_label)
-    frontier_label = _make_label("", 11, Color("#8f99b8")); wb.add_child(frontier_label)
-    combat_label = _make_label("", 11, Color("#49df9a")); wb.add_child(combat_label)
-    wb.add_child(_make_label("WASD / flèches · combat automatique", 10, Color("#6f7896")))
-
-    var director := PanelContainer.new()
-    director.add_theme_stylebox_override("panel", _panel_style(Color("#1a1230e8")))
-    center.add_child(director)
-    var db := VBoxContainer.new(); director.add_child(db)
-    db.add_child(_make_label("DIRECTEUR IA", 11, Color("#49df9a")))
-    ai_label = _make_label("Moyenne du groupe = difficulté de la frontière.", 11, Color("#c7c0df")); db.add_child(ai_label)
-
-    var log_panel := PanelContainer.new()
-    log_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    log_panel.add_theme_stylebox_override("panel", _panel_style(Color("#0c101de8")))
-    center.add_child(log_panel)
-    log_box = RichTextLabel.new()
-    log_box.bbcode_enabled = true
-    log_box.scroll_active = true
-    log_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    log_panel.add_child(log_box)
-
-    var right := VBoxContainer.new()
-    right.custom_minimum_size.x = 250
-    right.add_theme_constant_override("separation", 10)
-    columns.add_child(right)
-    var group := PanelContainer.new()
-    group.add_theme_stylebox_override("panel", _panel_style(Color("#111725dd")))
-    right.add_child(group)
-    var gb := VBoxContainer.new(); group.add_child(gb)
-    gb.add_child(_make_label("GROUPE", 12, Color("#dfe4ff")))
-    gb.add_child(_make_label("Toi · Niv. 5", 11, Color("#bfc7df")))
-    gb.add_child(_make_label("Ami_01 · Niv. 4", 11, Color("#bfc7df")))
-    gb.add_child(_make_label("Ami_02 · Niv. 6", 11, Color("#bfc7df")))
-    gb.add_child(_make_label("Jusqu'à 5 joueurs à terme.", 10, Color("#6f7896")))
-
-    var progress_panel := PanelContainer.new()
-    progress_panel.add_theme_stylebox_override("panel", _panel_style(Color("#111725dd")))
-    right.add_child(progress_panel)
-    var pb := VBoxContainer.new(); progress_panel.add_child(pb)
-    pb.add_child(_make_label("PROGRESSION", 12, Color("#dfe4ff")))
-    save_label = _make_label("", 11, Color("#8f99b8")); pb.add_child(save_label)
-
-func _move_player(_delta: float) -> void:
+func _move_player(delta: float) -> void:
+    if player == null:
+        return
     var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-    var direction := Vector3(input.x, 0, input.y)
+    var forward := -camera_pivot.global_transform.basis.z
+    var right := camera_pivot.global_transform.basis.x
+    var direction := (right * input.x + forward * input.y)
+    direction.y = 0
     if direction.length() > 1.0:
         direction = direction.normalized()
-    player.velocity = direction * 7.0
+
+    var target_velocity := direction * PLAYER_SPEED
+    player.velocity.x = move_toward(player.velocity.x, target_velocity.x, PLAYER_ACCEL * delta)
+    player.velocity.z = move_toward(player.velocity.z, target_velocity.z, PLAYER_ACCEL * delta)
+    if not player.is_on_floor():
+        player.velocity.y -= GRAVITY * delta
+    else:
+        player.velocity.y = -0.2
     player.move_and_slide()
-    player.position.x = clamp(player.position.x, -50.0, 50.0)
-    player.position.z = clamp(player.position.z, -50.0, 50.0)
+    player.position.x = clamp(player.position.x, -WORLD_SIZE * 0.48, WORLD_SIZE * 0.48)
+    player.position.z = clamp(player.position.z, -WORLD_SIZE * 0.48, WORLD_SIZE * 0.48)
 
-func _spawn_wave() -> void:
-    for i in range(6):
-        _spawn_enemy(i)
+    if direction.length() > 0.1:
+        var desired := atan2(direction.x, direction.z)
+        player.rotation.y = lerp_angle(player.rotation.y, desired, 0.16)
 
-func _spawn_enemy(index: int = 0) -> void:
-    var enemy := MeshInstance3D.new()
-    var mesh := CapsuleMesh.new()
-    mesh.height = 1.5
-    mesh.radius = 0.45
-    enemy.mesh = mesh
-    var enemy_level: int = randi_range(frontier_min, frontier_max)
-    var color := Color("#6f82e8") if index % 2 == 0 else Color("#d85a79")
-    var material := StandardMaterial3D.new()
-    material.albedo_color = color
-    material.emission_enabled = true
-    material.emission = color * 0.18
-    enemy.material_override = material
-    enemy.position = Vector3(randf_range(-18, 18), 0.9, randf_range(-18, 18))
-    enemy.set_meta("level", enemy_level)
-    enemy.set_meta("type", ["Brumeux", "Cendreux", "Ravager"][index % 3])
-    enemy.set_meta("hp", float(enemy_level * 18))
-    enemy.set_meta("damage", float(enemy_level) * 1.6)
+func _spawn_initial_enemies() -> void:
+    for i in range(8):
+        _spawn_enemy()
+
+func _spawn_enemy() -> void:
+    if enemies.size() >= MAX_ENEMIES:
+        return
+    var enemy := CharacterBody3D.new()
+    enemy.name = "Enemy"
+    var angle := randf() * TAU
+    var distance := randf_range(10.0, 32.0)
+    enemy.position = player.position + Vector3(cos(angle) * distance, 0.9, sin(angle) * distance)
+    enemy.position.x = clamp(enemy.position.x, -45.0, 45.0)
+    enemy.position.z = clamp(enemy.position.z, -45.0, 45.0)
     add_child(enemy)
-    enemies.push_back(enemy)
 
-func _nearest_enemy(max_distance: float = 24.0) -> Node3D:
-    var nearest: Node3D = null
-    var best: float = max_distance
+    var collision := CollisionShape3D.new()
+    var shape := CapsuleShape3D.new()
+    shape.height = 1.6
+    shape.radius = 0.45
+    collision.shape = shape
+    enemy.add_child(collision)
+
+    var visual := MeshInstance3D.new()
+    var mesh := CapsuleMesh.new()
+    mesh.height = 1.6
+    mesh.radius = 0.45
+    visual.mesh = mesh
+    var mat := StandardMaterial3D.new()
+    mat.albedo_color = Color("#d85a79") if randi_range(0, 1) == 0 else Color("#657ee8")
+    mat.emission_enabled = true
+    mat.emission = mat.albedo_color * 0.15
+    visual.material_override = mat
+    visual.position.y = 0.8
+    enemy.add_child(visual)
+
+    enemy.set_meta("level", randi_range(frontier_min, frontier_max))
+    enemy.set_meta("hp", float(int(enemy.get_meta("level")) * 30 + 30))
+    enemy.set_meta("max_hp", enemy.get_meta("hp"))
+    enemy.set_meta("damage", float(int(enemy.get_meta("level")) * 2 + 3))
+    enemy.set_meta("name", ["Brumeux", "Ravager", "Cendreux"][randi_range(0, 2)])
+    enemies.append(enemy)
+
+func _move_enemies(delta: float) -> void:
     for enemy in enemies:
         if not is_instance_valid(enemy):
             continue
-        var distance: float = player.global_position.distance_to(enemy.global_position)
+        var distance := enemy.global_position.distance_to(player.global_position)
+        if distance > ENEMY_ATTACK_RANGE:
+            var direction := (player.global_position - enemy.global_position)
+            direction.y = 0
+            direction = direction.normalized()
+            enemy.velocity = direction * min(2.4 + float(enemy.get_meta("level")) * 0.08, 4.0)
+            enemy.move_and_slide()
+            enemy.rotation.y = lerp_angle(enemy.rotation.y, atan2(direction.x, direction.z), 0.1)
+        else:
+            enemy.velocity = Vector3.ZERO
+
+func _nearest_enemy(max_distance := ATTACK_RANGE) -> Node3D:
+    var nearest: Node3D = null
+    var best := max_distance
+    for enemy in enemies:
+        if not is_instance_valid(enemy):
+            continue
+        var distance := player.global_position.distance_to(enemy.global_position)
         if distance < best:
             best = distance
             nearest = enemy
     return nearest
 
 func _auto_combat(delta: float) -> void:
-    combat_timer += delta
-    if combat_timer < 1.15:
+    attack_timer += delta
+    if attack_timer < ATTACK_INTERVAL:
         return
-    combat_timer = 0.0
+    attack_timer = 0.0
     var target := _nearest_enemy()
     if target == null:
-        combat_label.text = "⚔ Recherche de cible…"
+        combat_label.text = "Aucune cible proche — explore pour trouver des ennemis."
         return
-    var damage: int = max(1, int(power * 0.32 + level * 1.7 + reborn * 5))
-    var current_hp: float = float(target.get_meta("hp")) - float(damage)
-    target.set_meta("hp", current_hp)
+    var damage := max(1, int(power * 0.55 + level * 2.0 + reborn * 5.0))
+    target.set_meta("hp", float(target.get_meta("hp")) - damage)
     total_damage += damage
-    last_target = "%s Niv.%d" % [target.get_meta("type"), int(target.get_meta("level"))]
-    combat_label.text = "⚔ %s · -%d PV" % [last_target, damage]
-    if current_hp <= 0.0:
+    combat_label.text = "⚔ %s Niv.%d · -%d PV" % [target.get_meta("name"), int(target.get_meta("level")), damage]
+    _message("Attaque automatique : %s" % target.get_meta("name"))
+    if float(target.get_meta("hp")) <= 0:
         _defeat_enemy(target)
 
 func _enemy_attacks(delta: float) -> void:
     enemy_attack_timer += delta
-    if enemy_attack_timer < 1.8:
+    if enemy_attack_timer < 1.3:
         return
     enemy_attack_timer = 0.0
-    var target := _nearest_enemy(18.0)
-    if target == null:
-        return
-    var incoming: float = float(target.get_meta("damage"))
-    hp -= max(1.0, incoming * (1.0 - reborn * 0.03))
-    if hp <= 0.0:
+    for enemy in enemies:
+        if not is_instance_valid(enemy):
+            continue
+        if enemy.global_position.distance_to(player.global_position) <= ENEMY_ATTACK_RANGE:
+            hp -= float(enemy.get_meta("damage"))
+    if hp <= 0:
         _player_defeated()
 
 func _defeat_enemy(enemy: Node3D) -> void:
-    var enemy_level: int = int(enemy.get_meta("level"))
-    var reward_xp: int = 10 + enemy_level * 3 + reborn * 2
-    var reward_gold: int = 3 + enemy_level * 2
+    var enemy_level := int(enemy.get_meta("level"))
+    var reward_xp := 18 + enemy_level * 7
+    var reward_gold := 5 + enemy_level * 3
     xp += reward_xp
     gold += reward_gold
-    power += 1.0 + enemy_level * 0.06
     kills += 1
-    if randi_range(1, 100) <= 10:
-        last_loot = "Éclat d'Ascension"
-        power += 3
-    else:
-        last_loot = "+%d or" % reward_gold
-    _log("Victoire : %s · +%d XP · %s" % [enemy.get_meta("type"), reward_xp, last_loot])
+    power += 1.5 + enemy_level * 0.12
+    _message("Victoire · +%d XP · +%d or" % [reward_xp, reward_gold])
     enemy.queue_free()
     enemies.erase(enemy)
     while xp >= XP_PER_LEVEL:
         xp -= XP_PER_LEVEL
         level += 1
-        group_levels[0] = level
-        max_hp += 8 + reborn * 2
+        max_hp += 12 + reborn * 2
         hp = max_hp
-        power += 10 + reborn * 2
-        _log("[color=#bca5ff]Niveau %d atteint[/color]." % level)
+        power += 8 + reborn * 2
+        _message("Niveau %d atteint" % level)
         if level % 5 == 0:
             _update_frontier()
 
 func _player_defeated() -> void:
-    hp = max_hp * 0.55
-    gold = max(0, gold - 15)
-    player.position = Vector3(0, 1, 0)
-    _log("[color=#d85a79]Défaite[/color] · retour au point de départ · -15 or.")
+    hp = max_hp
+    gold = max(0, gold - 10)
+    player.position = Vector3.ZERO
+    _message("Défaite · retour au point de départ · -10 or")
 
 func _spawn_loop(delta: float) -> void:
     spawn_timer += delta
-    if spawn_timer >= 3.5 and enemies.size() < MAX_ENEMIES:
-        spawn_timer = 0.0
-        _spawn_enemy(enemies.size())
-
-func _passive_income(delta: float) -> void:
-    gold += int(delta * float(1 + reborn) * 0.7)
-    hp = min(max_hp, hp + delta * float(2 + reborn))
-
-func _average() -> float:
-    var total: float = 0.0
-    for value in group_levels:
-        total += float(value)
-    return total / float(group_levels.size())
+    if spawn_timer >= 4.0:
+        spawn_timer = 0
+        if enemies.size() < MAX_ENEMIES:
+            _spawn_enemy()
 
 func _update_frontier() -> void:
-    var average: float = _average()
-    frontier_min = max(1, int(floor(average / 5.0)) * 5)
-    frontier_max = frontier_min + 5
-    zone_index = min(zone_names.size() - 1, int(floor(average / 15.0)))
-    world_tier = max(1, 1 + int(floor(average / 30.0)))
-    ai_label.text = "Moyenne %.1f → niveaux %d–%d · zone suivante : %s." % [average, frontier_min, frontier_max, zone_names[min(zone_names.size() - 1, zone_index + 1)]]
-    _apply_zone_visuals()
+    var average := (level + group_levels_average()) / 2.0
+    frontier_min = max(1, int(floor(average)))
+    frontier_max = frontier_min + 4
+    zone_index = clamp(int(level / 10), 0, zone_names.size() - 1)
+
+func group_levels_average() -> float:
+    return float(level + max(1, level - 1) + level + 1) / 3.0
 
 func _apply_zone_visuals() -> void:
-    var arena := get_node_or_null("Arena") as MeshInstance3D
-    if arena == null:
-        return
-    var material := arena.material_override as StandardMaterial3D
-    if material == null:
-        return
-    var base_color: Color = zone_colors[zone_index]
-    material.albedo_color = base_color.lerp(Color("#10182a"), 0.45)
+    var world_ground := get_node_or_null("WorldGround/MeshInstance3D")
+    if world_ground:
+        var mat := world_ground.material_override as StandardMaterial3D
+        if mat:
+            mat.albedo_color = zone_colors[zone_index]
 
 func _reborn() -> void:
     if level < REBORN_LEVEL:
-        _show_toast("NIVEAU 25 REQUIS")
+        _message("Reborn disponible au niveau %d." % REBORN_LEVEL)
         return
     reborn += 1
     level = 1
-    xp = 0.0
-    group_levels[0] = 1
-    power = 100.0 + reborn * 25.0
-    max_hp = 100.0 + reborn * 15.0
+    xp = 0
+    power = 25 + reborn * 12
+    max_hp = 100 + reborn * 15
     hp = max_hp
-    gold = 100 + reborn * 50
+    gold += 100 + reborn * 50
     _update_frontier()
-    _log("[color=#d8b4ff]REBORN %d[/color] · bonus permanent acquis." % reborn)
-    _show_toast("REBORN %d" % reborn)
+    _apply_zone_visuals()
+    _message("REBORN %d · bonus permanent obtenu" % reborn)
     _save()
 
+func _build_hud() -> void:
+    var layer := CanvasLayer.new()
+    layer.name = "HUD"
+    add_child(layer)
+
+    var top := PanelContainer.new()
+    top.position = Vector2(18, 16)
+    top.size = Vector2(560, 112)
+    top.add_theme_stylebox_override("panel", _panel(Color("#0b1020dd")))
+    layer.add_child(top)
+    var box := VBoxContainer.new()
+    box.add_theme_constant_override("separation", 4)
+    top.add_child(box)
+
+    level_label = _label("NIVEAU 1 · REBORN 0", 20, Color("#f0f2ff")); box.add_child(level_label)
+    hp_label = _label("PV", 12, Color("#e98ba4")); box.add_child(hp_label)
+    xp_label = _label("XP", 12, Color("#bca5ff")); box.add_child(xp_label)
+    stats_label = _label("", 11, Color("#a5aec9")); box.add_child(stats_label)
+
+    var zone_panel := PanelContainer.new()
+    zone_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+    zone_panel.position = Vector2(-388, 16)
+    zone_panel.size = Vector2(370, 94)
+    zone_panel.add_theme_stylebox_override("panel", _panel(Color("#0b1020dd")))
+    layer.add_child(zone_panel)
+    var zone_box := VBoxContainer.new(); zone_panel.add_child(zone_box)
+    zone_label = _label("", 18, Color("#f0f2ff")); zone_box.add_child(zone_label)
+    combat_label = _label("Explore pour rencontrer des ennemis.", 11, Color("#55dfa0")); zone_box.add_child(combat_label)
+
+    crosshair = _label("+", 22, Color("#ffffffbb"))
+    crosshair.set_anchors_preset(Control.PRESET_CENTER)
+    crosshair.position = Vector2(-8, -16)
+    crosshair.size = Vector2(20, 32)
+    layer.add_child(crosshair)
+
+    hint_label = _label("WASD : se déplacer   •   Souris : caméra   •   Échap : libérer la souris", 11, Color("#c1c8df"))
+    hint_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+    hint_label.position = Vector2(18, -48)
+    hint_label.size = Vector2(650, 30)
+    layer.add_child(hint_label)
+
+    message_label = _label("", 13, Color("#e7ddff"))
+    message_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+    message_label.position = Vector2(-300, -90)
+    message_label.size = Vector2(600, 36)
+    message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    layer.add_child(message_label)
+
+    reborn_button = Button.new()
+    reborn_button.text = "REBORN"
+    reborn_button.position = Vector2(18, 138)
+    reborn_button.size = Vector2(140, 42)
+    reborn_button.pressed.connect(_reborn)
+    layer.add_child(reborn_button)
+
+func _label(text: String, size: int, color: Color) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.add_theme_font_size_override("font_size", size)
+    label.add_theme_color_override("font_color", color)
+    return label
+
+func _panel(color: Color) -> StyleBoxFlat:
+    var style := StyleBoxFlat.new()
+    style.bg_color = color
+    style.border_color = Color("#2d3858")
+    style.set_border_width_all(1)
+    style.set_corner_radius_all(12)
+    style.content_margin_left = 12
+    style.content_margin_right = 12
+    style.content_margin_top = 9
+    style.content_margin_bottom = 9
+    return style
+
 func _refresh_hud() -> void:
+    if not player:
+        return
     level_label.text = "NIVEAU %d · REBORN %d" % [level, reborn]
-    hp_bar.max_value = max_hp
-    hp_bar.value = hp
-    xp_bar.max_value = XP_PER_LEVEL
-    xp_bar.value = xp
-    stats_label.text = "HP %.0f/%.0f · Puissance %d · Or %d · Kills %d\nMoyenne groupe %.1f · Palier %d" % [hp, max_hp, int(power), gold, kills, _average(), world_tier]
-    loot_label.text = "Dernier butin : %s" % last_loot
+    hp_label.text = "PV  %d / %d" % [max(0, int(hp)), int(max_hp)]
+    xp_label.text = "XP  %d / %d" % [int(xp), int(XP_PER_LEVEL)]
+    stats_label.text = "Puissance %d · Or %d · Kills %d" % [int(power), gold, kills]
     zone_label.text = "%s · %s" % [zone_names[zone_index], zone_biomes[zone_index]]
-    frontier_label.text = "Frontière : niveaux %d–%d · Ennemis %d/%d" % [frontier_min, frontier_max, enemies.size(), MAX_ENEMIES]
-    save_label.text = "Sauvegarde automatique : active\nDégâts totaux : %d\nDernière cible : %s" % [total_damage, last_target]
     reborn_button.disabled = level < REBORN_LEVEL
+
+func _message(text: String) -> void:
+    last_message = text
+    if message_label:
+        message_label.text = text
 
 func _autosave(delta: float) -> void:
     autosave_timer += delta
-    if autosave_timer >= 30.0:
-        autosave_timer = 0.0
+    if autosave_timer >= 10.0:
+        autosave_timer = 0
         _save()
 
 func _save() -> void:
-    var data := {"level": level, "xp": xp, "reborn": reborn, "power": power, "hp": hp, "max_hp": max_hp, "gold": gold, "kills": kills, "total_damage": total_damage, "group_levels": group_levels, "world_tier": world_tier, "frontier_min": frontier_min, "frontier_max": frontier_max, "zone_index": zone_index}
+    var data := {
+        "level": level,
+        "xp": xp,
+        "reborn": reborn,
+        "power": power,
+        "hp": hp,
+        "max_hp": max_hp,
+        "gold": gold,
+        "kills": kills,
+        "total_damage": total_damage
+    }
     var file := FileAccess.open("user://infinite_ascension_save.json", FileAccess.WRITE)
-    if file != null:
+    if file:
         file.store_string(JSON.stringify(data))
         file.close()
 
@@ -405,11 +539,11 @@ func _load_save() -> void:
     if not FileAccess.file_exists("user://infinite_ascension_save.json"):
         return
     var file := FileAccess.open("user://infinite_ascension_save.json", FileAccess.READ)
-    if file == null:
+    if not file:
         return
-    var parsed: Variant = JSON.parse_string(file.get_as_text())
+    var parsed = JSON.parse_string(file.get_as_text())
     file.close()
-    if not parsed is Dictionary:
+    if typeof(parsed) != TYPE_DICTIONARY:
         return
     level = int(parsed.get("level", level))
     xp = float(parsed.get("xp", xp))
@@ -420,29 +554,3 @@ func _load_save() -> void:
     gold = int(parsed.get("gold", gold))
     kills = int(parsed.get("kills", kills))
     total_damage = int(parsed.get("total_damage", total_damage))
-    var saved_group: Variant = parsed.get("group_levels", group_levels)
-    if saved_group is Array:
-        group_levels = []
-        for value in saved_group:
-            group_levels.append(int(value))
-    world_tier = int(parsed.get("world_tier", world_tier))
-    frontier_min = int(parsed.get("frontier_min", frontier_min))
-    frontier_max = int(parsed.get("frontier_max", frontier_max))
-    zone_index = clampi(int(parsed.get("zone_index", zone_index)), 0, zone_names.size() - 1)
-
-func _log(message: String) -> void:
-    if log_box != null:
-        log_box.append_text(message + "\n")
-        log_box.scroll_to_line(log_box.get_line_count())
-
-func _show_toast(message: String) -> void:
-    var label := _make_label(message, 14, Color("#eef1ff"))
-    label.set_anchors_preset(Control.PRESET_CENTER_TOP)
-    label.position = Vector2(-140, 18)
-    label.size = Vector2(280, 48)
-    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    ui.add_child(label)
-    var tween := create_tween()
-    tween.tween_interval(0.6)
-    tween.tween_property(label, "modulate:a", 0.0, 0.5)
-    tween.tween_callback(label.queue_free)

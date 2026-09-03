@@ -35,7 +35,8 @@ jobs:
         with:
           version: 4.4.1-stable
           export-templates: true
-      - name: Initialize Godot
+      - name: Initialize isolated Dev Client project
+        working-directory: dev/android-client
         run: godot --headless --path . --editor --quit
       - name: Configure Godot Android
         run: |
@@ -49,15 +50,50 @@ jobs:
           export/android/debug_keystore_user = "androiddebugkey"
           export/android/debug_keystore_pass = "android"
           EOF
-      - name: Export Android Dev Client
+      - name: Create isolated Android export preset
+        working-directory: dev/android-client
         run: |
-          mkdir -p dist
-          godot --headless --path . --export-debug "Android Dev Client" dist/Infinite-Ascension-Android-Dev-unsigned.apk
+          cat > export_presets.cfg <<'EOF'
+          [preset.0]
+          name="Android Dev Client"
+          platform="Android"
+          runnable=true
+          advanced_options=false
+          dedicated_server=false
+          custom_features="dev_client"
+          version="4.4"
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter=""
+          encrypt_pck=false
+          encrypt_directory=false
+          script_export_mode=1
+
+          [preset.0.options]
+          custom_template/debug=""
+          custom_template/release=""
+          architectures/arm64-v8a=true
+          architectures/armeabi-v7a=false
+          architectures/x86=false
+          architectures/x86_64=false
+          package/unique_name="com.mataiasu.infiniteascension.dev"
+          package/name="Infinite Ascension Dev Client"
+          package/signed=false
+          application/config/name="Infinite Ascension Dev Client"
+          application/run/main_scene="res://AndroidDevLauncher.tscn"
+          permissions/internet=true
+          screen/immersive_mode=true
+          EOF
+      - name: Export Android Dev Client
+        working-directory: dev/android-client
+        run: |
+          mkdir -p ../../dist
+          godot --headless --path . --export-debug "Android Dev Client" ../../dist/Infinite-Ascension-Android-Dev-unsigned.apk
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.1"
-          "$BUILD_TOOLS/zipalign" -p -f 4 dist/Infinite-Ascension-Android-Dev-unsigned.apk dist/Infinite-Ascension-Android-Dev.apk
-          "$BUILD_TOOLS/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out dist/Infinite-Ascension-Android-Dev.apk dist/Infinite-Ascension-Android-Dev.apk
-          "$BUILD_TOOLS/apksigner" verify --verbose dist/Infinite-Ascension-Android-Dev.apk
-          rm dist/Infinite-Ascension-Android-Dev-unsigned.apk
+          "$BUILD_TOOLS/zipalign" -p -f 4 ../../dist/Infinite-Ascension-Android-Dev-unsigned.apk ../../dist/Infinite-Ascension-Android-Dev.apk
+          "$BUILD_TOOLS/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out ../../dist/Infinite-Ascension-Android-Dev.apk ../../dist/Infinite-Ascension-Android-Dev.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose ../../dist/Infinite-Ascension-Android-Dev.apk
+          rm ../../dist/Infinite-Ascension-Android-Dev-unsigned.apk
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:

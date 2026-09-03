@@ -17,6 +17,12 @@ func _ready() -> void:
     _build_menu()
     get_tree().paused = true
     Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+    call_deferred("_lock_runtime_while_menu_is_open")
+
+func _lock_runtime_while_menu_is_open() -> void:
+    var runtime := get_parent()
+    if runtime != null:
+        runtime.process_mode = Node.PROCESS_MODE_PAUSABLE
 
 func _build_menu() -> void:
     menu_root = Control.new()
@@ -66,7 +72,6 @@ func _build_menu() -> void:
     box.add_child(subtitle)
 
     var separator := HSeparator.new()
-    separator.modulate = Color("#6f4cff88")
     box.add_child(separator)
 
     var status := Label.new()

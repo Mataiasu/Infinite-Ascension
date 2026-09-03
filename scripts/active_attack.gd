@@ -3,13 +3,13 @@ extends Node
 # Active combat layer for Infinite Ascension.
 # Left click or Space performs a manual attack on the closest enemy in range.
 
-const ATTACK_RANGE := 6.0
-const ATTACK_COOLDOWN := 0.55
-const BASE_MULTIPLIER := 0.85
-const CRIT_CHANCE := 0.15
-const CRIT_MULTIPLIER := 1.75
+const ATTACK_RANGE: float = 6.0
+const ATTACK_COOLDOWN: float = 0.55
+const BASE_MULTIPLIER: float = 0.85
+const CRIT_CHANCE: float = 0.15
+const CRIT_MULTIPLIER: float = 1.75
 
-var cooldown := 0.0
+var cooldown: float = 0.0
 var player: CharacterBody3D
 var last_target: Node3D
 
@@ -37,7 +37,7 @@ func _find_player() -> CharacterBody3D:
 
 func _nearest_enemy() -> Node3D:
     var nearest: Node3D = null
-    var best := ATTACK_RANGE
+    var best: float = ATTACK_RANGE
     var root := get_tree().current_scene
     if root == null or player == null:
         return null
@@ -55,33 +55,39 @@ func _nearest_enemy() -> Node3D:
 
 func _attack() -> void:
     cooldown = ATTACK_COOLDOWN
-    var target := _nearest_enemy()
+    var target: Node3D = _nearest_enemy()
     if target == null:
         GameLogger.log_event("ACTIVE_ATTACK_MISS", {"reason": "no_target"})
         return
 
-    var level := 1
-    var power := 25.0
-    var reborn := 0
-    var runtime := get_tree().current_scene
+    var level: int = 1
+    var power: float = 25.0
+    var reborn: int = 0
+    var runtime: Node = get_tree().current_scene
     if runtime != null:
-        level = int(runtime.get("level")) if runtime.get("level") != null else 1
-        power = float(runtime.get("power")) if runtime.get("power") != null else 25.0
-        reborn = int(runtime.get("reborn")) if runtime.get("reborn") != null else 0
+        var runtime_level: Variant = runtime.get("level")
+        var runtime_power: Variant = runtime.get("power")
+        var runtime_reborn: Variant = runtime.get("reborn")
+        if runtime_level != null:
+            level = int(runtime_level)
+        if runtime_power != null:
+            power = float(runtime_power)
+        if runtime_reborn != null:
+            reborn = int(runtime_reborn)
 
-    var damage := max(1, int(power * BASE_MULTIPLIER + level * 2.0 + reborn * 5.0))
-    var critical := randf() < CRIT_CHANCE
+    var damage: int = max(1, int(power * BASE_MULTIPLIER + float(level) * 2.0 + float(reborn) * 5.0))
+    var critical: bool = randf() < CRIT_CHANCE
     if critical:
-        damage = int(round(damage * CRIT_MULTIPLIER))
+        damage = int(round(float(damage) * CRIT_MULTIPLIER))
 
-    var hp := float(target.get_meta("hp")) - damage
+    var hp: float = float(target.get_meta("hp")) - float(damage)
     target.set_meta("hp", hp)
     last_target = target
 
     if runtime != null and runtime.get("total_damage") != null:
         runtime.set("total_damage", int(runtime.get("total_damage")) + damage)
     if runtime != null and runtime.get("combat_label") != null:
-        var combat_label = runtime.get("combat_label")
+        var combat_label: Label = runtime.get("combat_label") as Label
         if combat_label != null:
             combat_label.text = "⚔ ATTAQUE %s%s · -%d PV" % [str(target.get_meta("name")), " · CRITIQUE" if critical else "", damage]
 
@@ -93,6 +99,5 @@ func _attack() -> void:
     })
 
     if hp <= 0.0:
-        # Let the existing runtime reward/cleanup system handle the defeat.
         if runtime != null and runtime.has_method("_defeat_enemy"):
             runtime.call("_defeat_enemy", target)

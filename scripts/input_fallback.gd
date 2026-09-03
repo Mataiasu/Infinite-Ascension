@@ -5,6 +5,7 @@ extends Node
 
 const PLAYER_SPEED := 7.0
 const PLAYER_ACCEL := 24.0
+const GRAVITY := 22.0
 
 var player: CharacterBody3D
 var camera_pivot: Node3D
@@ -13,6 +14,7 @@ var key_a := false
 var key_s := false
 var key_d := false
 var _reported_player := false
+var _reported_camera := false
 var _reported_movement := false
 var _last_position := Vector3.ZERO
 var _diagnostic_timer := 0.0
@@ -45,11 +47,18 @@ func _input(event: InputEvent) -> void:
 func _physics_process(delta: float) -> void:
     if player == null or not is_instance_valid(player):
         player = _find_player()
-        camera_pivot = _find_camera_pivot()
         if player != null and not _reported_player:
             _reported_player = true
             _last_position = player.global_position
             GameLogger.log_event("INPUT_PLAYER_FOUND", {"position": str(player.global_position)})
+
+    # The player is created before its CameraPivot by game_runtime.gd, so the
+    # camera must be resolved independently after the player exists.
+    if camera_pivot == null or not is_instance_valid(camera_pivot):
+        camera_pivot = _find_camera_pivot()
+        if camera_pivot != null and not _reported_camera:
+            _reported_camera = true
+            GameLogger.log_event("INPUT_CAMERA_FOUND", {})
 
     if player == null or camera_pivot == null:
         return
@@ -78,7 +87,7 @@ func _physics_process(delta: float) -> void:
     if player.is_on_floor():
         player.velocity.y = -0.2
     else:
-        player.velocity.y -= 22.0 * delta
+        player.velocity.y -= GRAVITY * delta
     player.move_and_slide()
 
     var pos := player.global_position
@@ -103,10 +112,8 @@ func _physics_process(delta: float) -> void:
     player.rotation.y = lerp_angle(player.rotation.y, desired, 0.16)
 
 func _find_player() -> CharacterBody3D:
-    var scene := get_tree().current_scene
-    if scene == null:
-        return null
-    var found := scene.find_child("Player", true, false)
+    var root := get_tree().root
+    var found := root.find_child("Player", true, false)
     return found as CharacterBody3D
 
 func _find_camera_pivot() -> Node3D:

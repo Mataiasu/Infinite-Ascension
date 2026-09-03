@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import platform
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
-import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -31,29 +29,24 @@ def base_dir() -> Path:
 
 def platform_key() -> str:
     system = platform.system().lower()
-    if system == "windows":
-        return "windows"
-    if system == "linux":
-        return "linux"
+    if system in GAME:
+        return system
     raise RuntimeError(f"Plateforme non supportée : {platform.system()}")
 
 
 def get_json(url: str) -> dict:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "Infinite-Ascension-Launcher/1.0",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=25) as response:
+    request = urllib.request.Request(url, headers={
+        "Accept": "application/json",
+        "User-Agent": "Infinite-Ascension-Launcher/1.1",
+        "Cache-Control": "no-cache",
+    })
+    with urllib.request.urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def local_build() -> int:
     try:
-        data = json.loads((base_dir() / STATE_FILE).read_text(encoding="utf-8"))
-        return int(data.get("build", 0))
+        return int(json.loads((base_dir() / STATE_FILE).read_text(encoding="utf-8")).get("build", 0))
     except (OSError, ValueError, json.JSONDecodeError):
         return 0
 
@@ -64,15 +57,9 @@ def save_build(build: int, commit: str) -> None:
     )
 
 
-def fetch_manifest() -> dict:
-    return get_json(MANIFEST_URL)
-
-
-def download(url: str, destination: Path, progress=None) -> None:
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "Infinite-Ascension-Launcher/1.0"}
-    )
-    with urllib.request.urlopen(req, timeout=180) as response, destination.open("wb") as output:
+def download(url: str, destination: Path, progress) -> None:
+    request = urllib.request.Request(url, headers={"User-Agent": "Infinite-Ascension-Launcher/1.1"})
+    with urllib.request.urlopen(request, timeout=300) as response, destination.open("wb") as output:
         total = int(response.headers.get("Content-Length", "0"))
         done = 0
         while True:
@@ -81,7 +68,7 @@ def download(url: str, destination: Path, progress=None) -> None:
                 break
             output.write(block)
             done += len(block)
-            if progress and total:
+            if total:
                 progress(done / total)
 
 
@@ -97,40 +84,31 @@ def game_path() -> Path:
     return base_dir() / GAME[platform_key()]
 
 
-def game_installed() -> bool:
-    return game_path().exists()
-
-
 def install_game(manifest: dict, status_cb, progress_cb) -> None:
     asset = manifest["assets"][platform_key()]
-    root = base_dir()
-    with tempfile.TemporaryDirectory(prefix="infinite_ascension_game_") as temp:
-        temp_dir = Path(temp)
-        archive = temp_dir / asset["name"]
-        unpacked = temp_dir / "unpacked"
-        unpacked.mkdir()
-
+    with tempfile.TemporaryDirectory(prefix="infinite_ascension_update_") as temp:
+        temp_path = Path(temp)
+        archive = temp_path / asset["name"]
+        extracted = temp_path / "game"
+        extracted.mkdir()
         status_cb("Téléchargement de la mise à jour…")
-        progress_cb(0.0)
         download(asset["url"], archive, progress_cb)
-
-        status_cb("Vérification de l'intégrité SHA-256…")
-        if sha256(archive).lower() != asset["sha256"].lower():
+        status_cb("Vérification de l'intégrité…")
+        if sha256(archive).lower() != str(asset["sha256"]).lower():
             raise RuntimeError("La vérification SHA-256 a échoué.")
-
         status_cb("Installation de la mise à jour…")
         with zipfile.ZipFile(archive, "r") as zf:
-            zf.extractall(unpacked)
-
-        for item in unpacked.iterdir():
-            destination = root / item.name
+            zf.extractall(extracted)
+        if not (extracted / GAME[platform_key()]).exists():
+            raise RuntimeError("L'exécutable du jeu est absent du package.")
+        for item in extracted.iterdir():
+            destination = base_dir() / item.name
             if item.is_dir():
                 if destination.exists():
                     shutil.rmtree(destination)
                 shutil.copytree(item, destination)
             else:
                 shutil.copy2(item, destination)
-
     save_build(int(manifest["build"]), str(manifest.get("commit", "")))
     progress_cb(1.0)
 
@@ -138,7 +116,7 @@ def install_game(manifest: dict, status_cb, progress_cb) -> None:
 def launch_game() -> None:
     executable = game_path()
     if not executable.exists():
-        raise RuntimeError(f"Jeu introuvable : {executable}")
+        raise RuntimeError("Le jeu n'est pas installé.")
     if platform_key() == "linux":
         executable.chmod(executable.stat().st_mode | 0o111)
     subprocess.Popen([str(executable)], cwd=str(executable.parent))
@@ -150,66 +128,35 @@ class LauncherApp:
         self.root.title("Infinite Ascension Launcher")
         self.root.geometry("660x440")
         self.root.minsize(560, 390)
+        self.root.resizable(False, False)
         self.root.configure(bg="#090c15")
-        self.manifest: dict | None = None
         self.busy = False
 
-        tk.Label(
-            self.root, text="INFINITE ASCENSION", font=("Segoe UI", 25, "bold"),
-            fg="#f1efff", bg="#090c15"
-        ).pack(pady=(28, 2))
-        tk.Label(
-            self.root, text="LAUNCHER", font=("Segoe UI", 11, "bold"),
-            fg="#a66cff", bg="#090c15"
-        ).pack()
+        tk.Label(self.root, text="INFINITE ASCENSION", font=("Segoe UI", 25, "bold"), fg="#f1efff", bg="#090c15").pack(pady=(28, 2))
+        tk.Label(self.root, text="LAUNCHER", font=("Segoe UI", 11, "bold"), fg="#a66cff", bg="#090c15").pack()
 
-        self.version_label = tk.Label(
-            self.root, text="Version installée : 0", font=("Segoe UI", 10),
-            fg="#a8b1ca", bg="#090c15"
-        )
+        self.version_label = tk.Label(self.root, text=f"Build locale : #{local_build()}", font=("Segoe UI", 10), fg="#a8b1ca", bg="#090c15")
         self.version_label.pack(pady=(20, 4))
-
-        self.status_label = tk.Label(
-            self.root, text="Vérification des mises à jour…", font=("Segoe UI", 10),
-            fg="#d9def1", bg="#090c15", wraplength=580
-        )
+        self.status_label = tk.Label(self.root, text="Vérification des mises à jour…", font=("Segoe UI", 10), fg="#d9def1", bg="#090c15", wraplength=580)
         self.status_label.pack(pady=4)
 
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
         self.progress = ttk.Progressbar(self.root, orient="horizontal", mode="determinate", length=520)
         self.progress.pack(pady=18)
 
         controls = tk.Frame(self.root, bg="#090c15")
         controls.pack(pady=8)
-        self.launch_button = tk.Button(
-            controls, text="▶  JOUER", command=self.launch, width=20, height=2,
-            bg="#6e43bf", fg="white", activebackground="#8859df", relief="flat",
-            font=("Segoe UI", 11, "bold")
-        )
+        self.launch_button = tk.Button(controls, text="▶  JOUER", command=self.launch, width=20, height=2, bg="#6e43bf", fg="white", activebackground="#8859df", relief="flat", font=("Segoe UI", 11, "bold"))
         self.launch_button.grid(row=0, column=0, padx=6)
-        self.update_button = tk.Button(
-            controls, text="↻  METTRE À JOUR", command=self.check_updates, width=20, height=2,
-            bg="#202940", fg="white", activebackground="#303b5c", relief="flat",
-            font=("Segoe UI", 10, "bold")
-        )
+        self.update_button = tk.Button(controls, text="↻  METTRE À JOUR", command=self.check_updates, width=20, height=2, bg="#202940", fg="white", activebackground="#303b5c", relief="flat", font=("Segoe UI", 10, "bold"))
         self.update_button.grid(row=0, column=1, padx=6)
 
-        tk.Label(
-            self.root,
-            text="Chaque lancement vérifie automatiquement GitHub.\nLes mises à jour publiées après chaque push sont téléchargées avant le démarrage du jeu.",
-            font=("Segoe UI", 9), fg="#68738f", bg="#090c15", justify="center"
-        ).pack(side="bottom", pady=22)
-
+        tk.Label(self.root, text="Vérification automatique à chaque ouverture.\nChaque push publié construit une nouvelle version du jeu.", font=("Segoe UI", 9), fg="#68738f", bg="#090c15", justify="center").pack(side="bottom", pady=22)
         self.root.after(250, self.check_updates)
 
-    def set_status(self, text: str) -> None:
+    def status(self, text: str) -> None:
         self.root.after(0, lambda: self.status_label.config(text=text))
 
-    def set_progress(self, value: float) -> None:
+    def progress_value(self, value: float) -> None:
         self.root.after(0, lambda: self.progress.config(value=max(0, min(100, value * 100))))
 
     def set_busy(self, busy: bool) -> None:
@@ -225,29 +172,28 @@ class LauncherApp:
 
     def _check_updates(self) -> None:
         try:
-            manifest = fetch_manifest()
-            self.manifest = manifest
+            manifest = get_json(MANIFEST_URL)
             remote = int(manifest.get("build", 0))
             local = local_build()
-            installed = "oui" if game_installed() else "non"
-            self.root.after(0, lambda: self.version_label.config(text=f"Build locale : #{local}  ·  Disponible : #{remote}  ·  Jeu installé : {installed}"))
-
-            if not game_installed() or remote > local:
-                install_game(manifest, self.set_status, self.set_progress)
+            self.root.after(0, lambda: self.version_label.config(text=f"Build locale : #{local}  ·  Disponible : #{remote}"))
+            if not game_path().exists() or remote > local:
+                install_game(manifest, self.status, self.progress_value)
+                self.status(f"Jeu à jour — build #{remote}.")
                 self.root.after(0, lambda: self.version_label.config(text=f"Build installée : #{remote}  ·  À jour"))
-                self.set_status("Jeu à jour. Tu peux jouer.")
             else:
-                self.set_progress(1.0)
-                self.set_status("Jeu déjà à jour.")
+                self.progress_value(1.0)
+                self.status("Jeu déjà à jour.")
         except Exception as exc:
-            self.set_status(f"Mise à jour indisponible : {exc}")
+            if game_path().exists():
+                self.status(f"Mise à jour indisponible : {exc} · lancement possible avec la version locale.")
+            else:
+                self.status(f"Impossible d'installer le jeu : {exc}")
         finally:
             self.set_busy(False)
 
     def launch(self) -> None:
         try:
-            if not game_installed():
-                self.set_status("Le jeu n'est pas installé. Vérification en cours…")
+            if not game_path().exists():
                 self.check_updates()
                 return
             launch_game()

@@ -1,0 +1,6 @@
+{"data":{"log_path":"C:\\Users\\Mat\\AppData\\Local/InfiniteAscension/Logs/game.log","platform":"Windows","session":"1788467943.684-2714043773"},"event":"GAME_START","ts":"2026-09-03 20:39:03"}
+{"data":{},"event":"INPUT_FALLBACK_READY","ts":"2026-09-03 20:39:03"}
+{"data":{"http":201},"event":"LIVE_LOG_UPLOAD_OK","ts":"2026-09-03 20:39:24"}
+{"data":{"http":201},"event":"LIVE_LOG_UPLOAD_OK","ts":"2026-09-03 20:39:44"}
+{"data":{"http":201},"event":"LIVE_LOG_UPLOAD_OK","ts":"2026-09-03 20:40:04"}
+{"data":{"http":201},"event":"LIVE_LOG_UPLOAD_OK","ts":"2026-09-03 20:40:24"}

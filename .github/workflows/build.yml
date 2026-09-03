@@ -18,14 +18,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Godot 4.4.1
         uses: solarlabyrinth/action-setup-godot@v3
         with:
           version: 4.4.1-stable
           export-templates: true
-      - name: Validate project
-        run: godot --headless --path . --editor --quit
+      - name: Validate GDScript files
+        shell: bash
+        run: |
+          set -o pipefail
+          mapfile -t scripts < <(find . -type f -name '*.gd' -not -path './.git/*' -not -path './.godot/*' | sort)
+          failed=0
+          for script in "${scripts[@]}"; do
+            echo "=== Checking ${script} ==="
+            if ! godot --headless --path . --check-only --script "${script}"; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Validate project initialization
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path . --editor --quit 2>&1 | tee godot-validation.log
+          if grep -Eq 'SCRIPT ERROR:|Failed to load script|Failed to create an autoload' godot-validation.log; then
+            echo 'Godot script errors detected during project initialization.'
+            exit 1
+          fi
       - name: Export Windows
         run: |
           mkdir -p dist/windows
@@ -63,9 +83,9 @@ jobs:
       GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -74,8 +94,8 @@ jobs:
       - name: Install Android SDK packages
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.1" "cmdline-tools;latest"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.1"
       - name: Verify Android toolchain
         shell: bash
         run: |
@@ -105,8 +125,15 @@ jobs:
         with:
           version: 4.4.1-stable
           export-templates: true
-      - name: Initialize Godot editor settings
-        run: godot --headless --path . --editor --quit
+      - name: Validate root project before Android export
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path . --editor --quit 2>&1 | tee godot-android-validation.log
+          if grep -Eq 'SCRIPT ERROR:|Failed to load script|Failed to create an autoload' godot-android-validation.log; then
+            echo 'Godot script errors detected before Android export.'
+            exit 1
+          fi
       - name: Configure Godot Android editor settings
         shell: bash
         run: |
@@ -121,8 +148,6 @@ jobs:
           export/android/debug_keystore_user = "androiddebugkey"
           export/android/debug_keystore_pass = "android"
           EOF
-          echo "--- Godot Android settings ---"
-          cat "$HOME/.config/godot/editor_settings-4.tres"
       - name: Export Android APK
         shell: bash
         run: |
@@ -158,7 +183,7 @@ jobs:
     name: Build native Windows launcher
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
@@ -178,8 +203,8 @@ jobs:
     name: Build Linux launcher
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: python -m pip install --upgrade pip

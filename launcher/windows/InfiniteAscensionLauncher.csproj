@@ -5,7 +5,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>Infinite-Ascension-Launcher</AssemblyName>
     <RootNamespace>InfiniteAscensionLauncher</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="LauncherMain.cs" />
+  </ItemGroup>
 </Project>

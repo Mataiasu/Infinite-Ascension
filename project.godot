@@ -21,6 +21,7 @@ attack={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":32)]}
 SaveManager="*res://scripts/save_manager.gd"
 GameLogger="*res://scripts/game_logger.gd"
 ActiveAttack="*res://scripts/active_attack.gd"
+PauseMenu="*res://scripts/pause_menu.gd"
 
 [rendering]
 renderer/rendering_method="gl_compatibility"

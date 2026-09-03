@@ -16,6 +16,9 @@ move_back={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":83),
 move_left={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":65),Object(InputEventKey,"physical_keycode":4194319)]}
 move_right={"deadzone":0.5,"events":[Object(InputEventKey,"physical_keycode":68),Object(InputEventKey,"physical_keycode":4194321)]}
 
+[autoload]
+SaveManager="*res://scripts/save_manager.gd"
+
 [rendering]
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"

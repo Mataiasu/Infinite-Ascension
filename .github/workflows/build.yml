@@ -74,6 +74,19 @@ jobs:
         with:
           version: 4.4.1-stable
           export-templates: true
+      - name: Fix Android GDScript typing
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/game_runtime.gd")
+          text = path.read_text(encoding="utf-8")
+          old = 'var damage := max(1, int(power * 0.55 + level * 2.0 + reborn * 5.0))'
+          new = 'var damage: int = max(1, int(power * 0.55 + level * 2.0 + reborn * 5.0))'
+          if old not in text:
+              raise SystemExit("Expected GDScript line not found")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
       - name: Export Android APK
         run: |
           mkdir -p dist/android

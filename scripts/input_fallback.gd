@@ -22,7 +22,7 @@ var _diagnostic_timer := 0.0
 func _ready() -> void:
     process_mode = Node.PROCESS_MODE_ALWAYS
     process_priority = 100
-    GameLogger.log_event("INPUT_FALLBACK_READY", {"mode": "event_driven", "keys": "WASD"})
+    _log("INPUT_FALLBACK_READY", {"mode": "event_driven", "keys": "WASD"})
 
 func _input(event: InputEvent) -> void:
     if event is not InputEventKey:
@@ -42,7 +42,7 @@ func _input(event: InputEvent) -> void:
             key_d = pressed
 
     if pressed and key.physical_keycode in [KEY_W, KEY_A, KEY_S, KEY_D]:
-        GameLogger.log_event("INPUT_KEY_DOWN", {"key": OS.get_keycode_string(key.physical_keycode)})
+        _log("INPUT_KEY_DOWN", {"key": OS.get_keycode_string(key.physical_keycode)})
 
 func _physics_process(delta: float) -> void:
     if player == null or not is_instance_valid(player):
@@ -50,7 +50,7 @@ func _physics_process(delta: float) -> void:
         if player != null and not _reported_player:
             _reported_player = true
             _last_position = player.global_position
-            GameLogger.log_event("INPUT_PLAYER_FOUND", {"position": str(player.global_position)})
+            _log("INPUT_PLAYER_FOUND", {"position": str(player.global_position)})
 
     # The player is created before its CameraPivot by game_runtime.gd, so the
     # camera must be resolved independently after the player exists.
@@ -58,7 +58,7 @@ func _physics_process(delta: float) -> void:
         camera_pivot = _find_camera_pivot()
         if camera_pivot != null and not _reported_camera:
             _reported_camera = true
-            GameLogger.log_event("INPUT_CAMERA_FOUND", {})
+            _log("INPUT_CAMERA_FOUND", {})
 
     if player == null or camera_pivot == null:
         return
@@ -93,7 +93,7 @@ func _physics_process(delta: float) -> void:
     var pos := player.global_position
     if not _reported_movement and pos.distance_to(_last_position) > 0.01:
         _reported_movement = true
-        GameLogger.log_event("INPUT_MOVEMENT_ACTIVE", {
+        _log("INPUT_MOVEMENT_ACTIVE", {
             "from": str(_last_position),
             "to": str(pos),
             "velocity": str(player.velocity)
@@ -102,7 +102,7 @@ func _physics_process(delta: float) -> void:
     _diagnostic_timer += delta
     if _diagnostic_timer >= 2.0:
         _diagnostic_timer = 0.0
-        GameLogger.log_event("INPUT_STATE", {
+        _log("INPUT_STATE", {
             "keys": {"w": key_w, "a": key_a, "s": key_s, "d": key_d},
             "position": str(pos),
             "velocity": str(player.velocity)
@@ -120,3 +120,8 @@ func _find_camera_pivot() -> Node3D:
     if player == null:
         return null
     return player.get_node_or_null("CameraPivot") as Node3D
+
+func _log(event_name: String, data: Dictionary = {}) -> void:
+    var logger := get_node_or_null("/root/GameLogger")
+    if logger != null and logger.has_method("log_event"):
+        logger.call("log_event", event_name, data)

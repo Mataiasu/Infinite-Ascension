@@ -1,8 +1,6 @@
 name: Android Dev Client
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

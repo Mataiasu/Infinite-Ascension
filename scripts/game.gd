@@ -1,20 +1,27 @@
 extends Node3D
 
+# Infinite Ascension v0.4
+# Runtime systems create the player, enemies and HUD.
+
+const OLLAMA_URL := "http://127.0.0.1:11434/api/chat"
+const MODEL_NAME := "qwen3:latest"
+
 var level := 5
 var xp := 0.0
 var reborn := 0
 var power := 120.0
 var gold := 250
 var world_tier := 1
-var group_levels := [5,4,6]
+var group_levels := [5, 4, 6]
 var frontier_min := 5
 var frontier_max := 10
 var zone_index := 0
-var zone_names := ["Forêt des Brumes","Vallée des Cendres","Cité Fracturée","Océan Céleste","Royaume Mécanique","Abysses Stellaires","Frontière Infinie"]
-var zone_biomes := ["Sylvestre","Volcanique","Ruines","Aérien","Mécanique","Cosmique","Inconnu"]
+var zone_names := ["Forêt des Brumes", "Vallée des Cendres", "Cité Fracturée", "Océan Céleste", "Royaume Mécanique", "Abysses Stellaires", "Frontière Infinie"]
+var zone_biomes := ["Sylvestre", "Volcanique", "Ruines", "Aérien", "Mécanique", "Cosmique", "Inconnu"]
 var enemies: Array[Node3D] = []
 var spawn_timer := 0.0
 var combat_timer := 0.0
+var gold_accumulator := 0.0
 var gold_per_second := 1.0
 
 var player: CharacterBody3D
@@ -44,7 +51,9 @@ func _ready() -> void:
     _update_frontier()
     _log("Bienvenue dans Infinite Ascension.")
     _log("Le monde s'adapte à la progression du groupe.")
+    _log("Prototype v0.4 : monde + progression + combat automatique.")
     _spawn_wave()
+    _refresh()
 
 func _setup_world() -> void:
     var env := WorldEnvironment.new()
@@ -58,14 +67,14 @@ func _setup_world() -> void:
     add_child(env)
 
     var sun := DirectionalLight3D.new()
-    sun.rotation_degrees = Vector3(-55,-25,0)
+    sun.rotation_degrees = Vector3(-55, -25, 0)
     sun.light_energy = 1.2
     sun.shadow_enabled = true
     add_child(sun)
 
     var floor := MeshInstance3D.new()
     var plane := PlaneMesh.new()
-    plane.size = Vector2(120,120)
+    plane.size = Vector2(120, 120)
     floor.mesh = plane
     var mat := StandardMaterial3D.new()
     mat.albedo_color = Color("#10182a")
@@ -77,9 +86,9 @@ func _setup_world() -> void:
         var rock := MeshInstance3D.new()
         var box := BoxMesh.new()
         var s := randf_range(0.25, 1.2)
-        box.size = Vector3(s, randf_range(0.2,1.4), s)
+        box.size = Vector3(s, randf_range(0.2, 1.4), s)
         rock.mesh = box
-        rock.position = Vector3(randf_range(-42,42), box.size.y/2.0, randf_range(-42,42))
+        rock.position = Vector3(randf_range(-42, 42), box.size.y / 2.0, randf_range(-42, 42))
         var rm := StandardMaterial3D.new()
         rm.albedo_color = Color("#1b2440") if i % 3 else Color("#252047")
         rock.material_override = rm
@@ -87,8 +96,9 @@ func _setup_world() -> void:
 
 func _setup_player() -> void:
     player = CharacterBody3D.new()
-    player.position = Vector3(0,1,0)
+    player.position = Vector3(0, 1, 0)
     add_child(player)
+
     var mesh := MeshInstance3D.new()
     var capsule := CapsuleMesh.new()
     capsule.height = 1.7
@@ -104,8 +114,8 @@ func _setup_player() -> void:
 
 func _setup_camera() -> void:
     camera = Camera3D.new()
-    camera.position = Vector3(0,18,14)
-    camera.rotation_degrees = Vector3(-48,0,0)
+    camera.position = Vector3(0, 18, 14)
+    camera.rotation_degrees = Vector3(-48, 0, 0)
     camera.current = true
     player.add_child(camera)
 
@@ -165,17 +175,17 @@ func _setup_ui() -> void:
     stats.add_child(sv)
     level_label = _label("", 18, Color("#f0f2ff")); sv.add_child(level_label)
     xp_bar = ProgressBar.new(); xp_bar.show_percentage = false; xp_bar.custom_minimum_size.y = 12; sv.add_child(xp_bar)
-    avg_label = _label("",12,Color("#8f99b8")); sv.add_child(avg_label)
-    power_label = _label("",12,Color("#8f99b8")); sv.add_child(power_label)
-    gold_label = _label("",12,Color("#ffd166")); sv.add_child(gold_label)
-    tier_label = _label("",12,Color("#b9a4ff")); sv.add_child(tier_label)
+    avg_label = _label("", 12, Color("#8f99b8")); sv.add_child(avg_label)
+    power_label = _label("", 12, Color("#8f99b8")); sv.add_child(power_label)
+    gold_label = _label("", 12, Color("#ffd166")); sv.add_child(gold_label)
+    tier_label = _label("", 12, Color("#b9a4ff")); sv.add_child(tier_label)
 
     var reb := PanelContainer.new()
     reb.add_theme_stylebox_override("panel", _panel_style(Color("#171125dd")))
     left.add_child(reb)
     var rv := VBoxContainer.new(); reb.add_child(rv)
-    rv.add_child(_label("REBORN",12,Color("#dfe4ff")))
-    reborn_label = _label("",11,Color("#a9b0c9")); rv.add_child(reborn_label)
+    rv.add_child(_label("REBORN", 12, Color("#dfe4ff")))
+    reborn_label = _label("", 11, Color("#a9b0c9")); rv.add_child(reborn_label)
     reborn_button = Button.new()
     reborn_button.text = "↻ Reborn — niveau 25"
     reborn_button.custom_minimum_size.y = 50
@@ -191,16 +201,16 @@ func _setup_ui() -> void:
     worldp.add_theme_stylebox_override("panel", _panel_style(Color("#101525dd")))
     center.add_child(worldp)
     var wv := VBoxContainer.new(); worldp.add_child(wv)
-    zone_label = _label("",20,Color("#eef1ff")); wv.add_child(zone_label)
-    frontier_label = _label("",11,Color("#8f99b8")); wv.add_child(frontier_label)
-    combat_label = _label("",11,Color("#49df9a")); wv.add_child(combat_label)
+    zone_label = _label("", 20, Color("#eef1ff")); wv.add_child(zone_label)
+    frontier_label = _label("", 11, Color("#8f99b8")); wv.add_child(frontier_label)
+    combat_label = _label("", 11, Color("#49df9a")); wv.add_child(combat_label)
 
     var aip := PanelContainer.new()
     aip.add_theme_stylebox_override("panel", _panel_style(Color("#1a1230e8")))
     center.add_child(aip)
     var av := VBoxContainer.new(); aip.add_child(av)
-    av.add_child(_label("DIRECTEUR IA",11,Color("#49df9a")))
-    ai_label = _label("Simulation locale active. L'IA sera branchée après validation du gameplay.",11,Color("#bcb7d4")); av.add_child(ai_label)
+    av.add_child(_label("DIRECTEUR IA", 11, Color("#49df9a")))
+    ai_label = _label("Simulation locale active. L'IA sera branchée après validation du gameplay.", 11, Color("#bcb7d4")); av.add_child(ai_label)
     generate_button = Button.new()
     generate_button.text = "✦ Générer la prochaine frontière"
     generate_button.custom_minimum_size.y = 48
@@ -225,15 +235,15 @@ func _setup_ui() -> void:
     help.add_theme_stylebox_override("panel", _panel_style(Color("#111725dd")))
     right.add_child(help)
     var hv := VBoxContainer.new(); help.add_child(hv)
-    hv.add_child(_label("MONDE VIVANT",12,Color("#dfe4ff")))
-    hv.add_child(_label("Déplacement : WASD / flèches\nLe personnage combat automatiquement.\n\nLes monstres et récompenses suivent la zone actuelle.\n\nAtteins le niveau 25 pour Reborn.",11,Color("#8f99b8")))
+    hv.add_child(_label("MONDE VIVANT", 12, Color("#dfe4ff")))
+    hv.add_child(_label("Déplacement : WASD / flèches\nLe personnage combat automatiquement.\n\nLes monstres et récompenses suivent la zone actuelle.\n\nAtteins le niveau 25 pour Reborn.", 11, Color("#8f99b8")))
 
-    toast = _label("",14,Color("#eef1ff"))
+    toast = _label("", 14, Color("#eef1ff"))
     toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     toast.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
     toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
     toast.position = Vector2(-160, 18)
-    toast.size = Vector2(320,48)
+    toast.size = Vector2(320, 48)
     toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
     toast.modulate.a = 0.0
     ui.add_child(toast)
@@ -242,20 +252,25 @@ func _process(delta: float) -> void:
     _move_player(delta)
     _auto_combat(delta)
     spawn_timer += delta
-    combat_timer += delta
-    gold += int(floor(gold_per_second * delta))
     if spawn_timer > 4.0 and enemies.size() < 8:
         spawn_timer = 0.0
         _spawn_enemy()
+    gold_accumulator += delta
+    if gold_accumulator >= 1.0:
+        var whole := int(floor(gold_accumulator))
+        gold += whole
+        gold_accumulator -= whole
     _refresh()
 
-func _move_player(delta: float) -> void:
-    var input := Input.get_vector("move_left","move_right","move_forward","move_back")
-    var dir := Vector3(input.x,0,input.y)
+func _move_player(_delta: float) -> void:
+    var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+    var dir := Vector3(input.x, 0, input.y)
+    if dir.length() > 1.0:
+        dir = dir.normalized()
     player.velocity = dir * 7.0
     player.move_and_slide()
-    player.position.x = clamp(player.position.x,-50.0,50.0)
-    player.position.z = clamp(player.position.z,-50.0,50.0)
+    player.position.x = clamp(player.position.x, -50.0, 50.0)
+    player.position.z = clamp(player.position.z, -50.0, 50.0)
 
 func _spawn_wave() -> void:
     for i in range(6):
@@ -269,13 +284,16 @@ func _spawn_enemy(index := 0) -> void:
     enemy.mesh = mesh
     var mat := StandardMaterial3D.new()
     mat.albedo_color = Color("#d85a79") if index % 2 else Color("#6f82e8")
+    mat.emission_enabled = true
+    mat.emission = mat.albedo_color * 0.18
     enemy.material_override = mat
-    enemy.position = Vector3(randf_range(-18,18),0.9,randf_range(-18,18))
+    enemy.position = Vector3(randf_range(-18, 18), 0.9, randf_range(-18, 18))
     add_child(enemy)
     enemies.append(enemy)
 
-func _auto_combat(delta: float) -> void:
+func _auto_combat(_delta: float) -> void:
     if combat_timer < 1.5:
+        combat_timer += _delta
         return
     combat_timer = 0.0
     if enemies.is_empty():
@@ -287,16 +305,17 @@ func _auto_combat(delta: float) -> void:
         if is_instance_valid(e):
             var d := player.global_position.distance_to(e.global_position)
             if d < best:
-                target = e; best = d
+                target = e
+                best = d
     if best > 22.0:
         combat_label.text = "Auto-combat · cible trop éloignée"
         return
-    var enemy_level := randi_range(max(1,frontier_min), max(frontier_min+1,frontier_max))
+    var enemy_level := randi_range(max(1, frontier_min), max(frontier_min + 1, frontier_max))
     var reward_xp := 8 + enemy_level * 2 + reborn
     xp += reward_xp
     gold += enemy_level * 3
     power += 1
-    combat_label.text = "⚔ Victoire · ennemi niveau %d · +%d XP · +%d or" % [enemy_level,reward_xp,enemy_level*3]
+    combat_label.text = "⚔ Victoire · ennemi niveau %d · +%d XP · +%d or" % [enemy_level, reward_xp, enemy_level * 3]
     _log("Victoire contre un monstre niveau %d." % enemy_level)
     target.queue_free()
     enemies.erase(target)
@@ -319,16 +338,16 @@ func _update_frontier() -> void:
     avg_level = _average()
     frontier_min = max(1, int(floor(avg_level / 5.0)) * 5)
     frontier_max = frontier_min + 5
-    zone_index = min(zone_names.size()-1, int(floor(avg_level / 15.0)))
-    ai_label.text = "Analyse : niveau moyen %.1f → prochaine zone niveau %d–%d." % [avg_level,frontier_min,frontier_max]
+    zone_index = min(zone_names.size() - 1, int(floor(avg_level / 15.0)))
+    ai_label.text = "Analyse : niveau moyen %.1f → prochaine zone niveau %d–%d." % [avg_level, frontier_min, frontier_max]
 
 func _generate_frontier() -> void:
     _update_frontier()
     world_tier = max(world_tier, 1 + int(floor(avg_level / 30.0)))
-    var future_index := min(zone_names.size()-1, zone_index + 1)
+    var future_index := min(zone_names.size() - 1, zone_index + 1)
     zone_label.text = zone_names[future_index]
-    ai_label.text = "Frontière générée : %s · %s · niveaux %d–%d · boss prévu." % [zone_names[future_index],zone_biomes[future_index],frontier_min,frontier_max]
-    _log("[color=#49df9a]Directeur IA[/color] : nouvelle frontière validée → %s." % zone_names[future_index])
+    ai_label.text = "Frontière générée : %s · %s · niveaux %d–%d · boss prévu." % [zone_names[future_index], zone_biomes[future_index], frontier_min, frontier_max]
+    _log("[color=#49df9a]Directeur IA[/color] : frontière validée → %s." % zone_names[future_index])
     _show_toast("Nouvelle frontière ajoutée")
 
 func _reborn() -> void:
@@ -338,33 +357,35 @@ func _reborn() -> void:
     reborn += 1
     level = 1
     group_levels[0] = 1
-    xp = 0
+    xp = 0.0
     power += 25 + reborn * 10
     world_tier = max(world_tier, 1 + int(floor(reborn / 2.0)))
     _log("[color=#d7bcff]REBORN #%d[/color] : progression temporaire réinitialisée, monde conservé." % reborn)
-    _show_toast("REBORN #%d — bonus permanent acquis" % reborn)
+    _show_toast("REBORN #%d · bonus permanent" % reborn)
     _update_frontier()
 
 func _refresh() -> void:
     var avg := _average()
-    level_label.text = "Niveau %d · Reborn %d" % [level,reborn]
+    level_label.text = "Niveau %d · Reborn %d" % [level, reborn]
     avg_label.text = "Niveau moyen du groupe : %.1f" % avg
-    power_label.text = "Puissance effective : %d" % int(power)
-    gold_label.text = "Or : %d  ·  +%.1f/s" % [gold,gold_per_second]
+    power_label.text = "Puissance : %d" % int(power)
+    gold_label.text = "Or : %d  · +%.1f/s" % [gold, gold_per_second]
     tier_label.text = "World Tier : %d" % world_tier
     xp_bar.value = xp
-    reborn_label.text = "Reborn permanents : %d\nBonus puissance : +%d" % [reborn,int(max(0, power-120))]
+    reborn_label.text = "Reborn : %d\nBonus permanents : +%d puissance" % [reborn, int(max(0, power - 120))]
     reborn_button.disabled = level < 25
-    zone_label.text = "%s · %s" % [zone_names[zone_index],zone_biomes[zone_index]]
-    frontier_label.text = "Frontière active : niveaux %d–%d · niveau moyen %.1f" % [frontier_min,frontier_max,avg]
+    zone_label.text = "%s · %s" % [zone_names[zone_index], zone_biomes[zone_index]]
+    frontier_label.text = "Frontière active : niveaux %d–%d · moyenne %.1f" % [frontier_min, frontier_max, avg]
 
 func _log(text: String) -> void:
-    if log_box:
-        log_box.append_text("[color=#6f7896][%s][/color] %s\n" % [Time.get_time_string_from_system(),text])
+    if is_instance_valid(log_box):
+        log_box.append_text("[color=#6f7896][%s][/color] %s\n" % [Time.get_time_string_from_system(), text])
 
 func _show_toast(text: String) -> void:
+    if not is_instance_valid(toast):
+        return
     toast.text = text
     toast.modulate.a = 1.0
     var tween := create_tween()
-    tween.tween_interval(1.6)
-    tween.tween_property(toast,"modulate:a",0.0,0.4)
+    tween.tween_interval(1.5)
+    tween.tween_property(toast, "modulate:a", 0.0, 0.35)

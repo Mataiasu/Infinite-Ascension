@@ -1,7 +1,7 @@
 extends Node3D
 
 # Infinite Ascension — playable vertical slice
-# Third-person exploration, direct physical-key movement, mouse camera,
+# Third-person exploration, event-driven WASD movement, mouse camera,
 # manual combat, enemies, XP/levels, Reborn progression, procedural scenery and local save.
 
 const XP_PER_LEVEL := 100.0
@@ -35,6 +35,10 @@ var enemy_attack_timer := 0.0
 var spawn_timer := 0.0
 var autosave_timer := 0.0
 var mouse_captured := true
+var key_w := false
+var key_a := false
+var key_s := false
+var key_d := false
 var last_message := "Explore le monde."
 
 var zone_names := ["Forêt des Brumes", "Vallée des Cendres", "Cité Fracturée", "Océan Céleste", "Royaume Mécanique", "Abysses Stellaires", "Frontière Infinie"]
@@ -54,6 +58,7 @@ var crosshair: Label
 
 func _ready() -> void:
     randomize()
+    process_mode = Node.PROCESS_MODE_ALWAYS
     Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
     _build_world()
     _build_player()
@@ -77,13 +82,31 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
     _move_player(delta)
 
-func _unhandled_input(event: InputEvent) -> void:
-    if event is InputEventMouseMotion and mouse_captured:
-        camera_pivot.rotate_y(-event.relative.x * 0.004)
-        camera.rotation.x = clamp(camera.rotation.x - event.relative.y * 0.003, deg_to_rad(-65), deg_to_rad(20))
-    elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-        mouse_captured = not mouse_captured
-        Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mouse_captured else Input.MOUSE_MODE_VISIBLE
+func _input(event: InputEvent) -> void:
+    if event is InputEventKey:
+        var key := event as InputEventKey
+        if key.echo:
+            return
+        var pressed := key.pressed
+        match key.physical_keycode:
+            KEY_W:
+                key_w = pressed
+            KEY_A:
+                key_a = pressed
+            KEY_S:
+                key_s = pressed
+            KEY_D:
+                key_d = pressed
+            KEY_ESCAPE:
+                if pressed:
+                    mouse_captured = not mouse_captured
+                    Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mouse_captured else Input.MOUSE_MODE_VISIBLE
+
+    elif event is InputEventMouseMotion and mouse_captured:
+        if camera_pivot != null and camera != null:
+            camera_pivot.rotate_y(-event.relative.x * 0.004)
+            camera.rotation.x = clamp(camera.rotation.x - event.relative.y * 0.003, deg_to_rad(-65), deg_to_rad(20))
+
     elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and not mouse_captured:
         mouse_captured = true
         Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -182,6 +205,8 @@ func _create_crystal(pos: Vector3) -> void:
 func _build_player() -> void:
     player = CharacterBody3D.new()
     player.name = "Player"
+    player.collision_layer = 1
+    player.collision_mask = 1
     player.position = Vector3(0, 1.0, 0)
     add_child(player)
 
@@ -227,16 +252,15 @@ func _build_camera() -> void:
     camera_pivot.add_child(camera)
 
 func _update_camera() -> void:
+    if camera == null:
+        return
     camera.position = camera.position.lerp(Vector3(0, 4.0, 8.5), 0.12)
 
 func _move_player(delta: float) -> void:
     if player == null or not is_instance_valid(player) or camera_pivot == null:
         return
 
-    var input := Vector2(
-        float(int(Input.is_physical_key_pressed(KEY_D)) - int(Input.is_physical_key_pressed(KEY_A))),
-        float(int(Input.is_physical_key_pressed(KEY_W)) - int(Input.is_physical_key_pressed(KEY_S)))
-    )
+    var input := Vector2(float(int(key_d) - int(key_a)), float(int(key_w) - int(key_s)))
     if input.length() > 1.0:
         input = input.normalized()
 
@@ -256,12 +280,13 @@ func _move_player(delta: float) -> void:
     var target_velocity := direction * PLAYER_SPEED
     player.velocity.x = move_toward(player.velocity.x, target_velocity.x, PLAYER_ACCEL * delta)
     player.velocity.z = move_toward(player.velocity.z, target_velocity.z, PLAYER_ACCEL * delta)
+
     if player.is_on_floor():
         player.velocity.y = -0.2
     else:
         player.velocity.y -= GRAVITY * delta
-    player.move_and_slide()
 
+    player.move_and_slide()
     player.position.x = clamp(player.position.x, -WORLD_SIZE * 0.48, WORLD_SIZE * 0.48)
     player.position.z = clamp(player.position.z, -WORLD_SIZE * 0.48, WORLD_SIZE * 0.48)
 
@@ -276,8 +301,12 @@ func _spawn_initial_enemies() -> void:
 func _spawn_enemy() -> void:
     if enemies.size() >= MAX_ENEMIES:
         return
+
     var enemy := CharacterBody3D.new()
     enemy.name = "Enemy"
+    enemy.collision_layer = 2
+    enemy.collision_mask = 2
+
     var angle := randf() * TAU
     var distance := randf_range(10.0, 32.0)
     enemy.position = player.position + Vector3(cos(angle) * distance, 0.9, sin(angle) * distance)
@@ -364,6 +393,7 @@ func _defeat_enemy(enemy: Node3D) -> void:
     _message("Victoire · +%d XP · +%d or" % [reward_xp, reward_gold])
     enemy.queue_free()
     enemies.erase(enemy)
+
     while xp >= XP_PER_LEVEL:
         xp -= XP_PER_LEVEL
         level += 1

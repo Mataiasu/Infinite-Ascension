@@ -70,12 +70,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: python -m pip install --upgrade pip
       - run: python -m pip install -r launcher/requirements.txt
-      - run: pyinstaller --onefile --noconsole --name Infinite-Ascension-Launcher launcher/launcher.py
+      - name: Build launcher (onedir)
+        run: pyinstaller --clean --noconfirm --onedir --windowed --name Infinite-Ascension-Launcher launcher/launcher.py
+      - name: Package launcher
+        shell: pwsh
+        run: Compress-Archive -Path dist/Infinite-Ascension-Launcher/* -DestinationPath dist/Infinite-Ascension-Launcher-Windows.zip -Force
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-windows
-          path: dist/Infinite-Ascension-Launcher.exe
+          path: dist/Infinite-Ascension-Launcher-Windows.zip
           retention-days: 7
 
   launcher-linux:
@@ -86,13 +91,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: python -m pip install --upgrade pip
       - run: python -m pip install -r launcher/requirements.txt
-      - run: pyinstaller --onefile --name Infinite-Ascension-Launcher launcher/launcher.py
-      - run: chmod +x dist/Infinite-Ascension-Launcher
+      - name: Build launcher (onedir)
+        run: pyinstaller --clean --noconfirm --onedir --name Infinite-Ascension-Launcher launcher/launcher.py
+      - name: Package launcher
+        run: |
+          chmod +x dist/Infinite-Ascension-Launcher/Infinite-Ascension-Launcher
+          cd dist
+          zip -r Infinite-Ascension-Launcher-Linux.zip Infinite-Ascension-Launcher
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-linux
-          path: dist/Infinite-Ascension-Launcher
+          path: dist/Infinite-Ascension-Launcher-Linux.zip
           retention-days: 7
 
   publish:
@@ -111,12 +122,12 @@ jobs:
         run: |
           WIN_SHA=$(sha256sum release/Infinite-Ascension-Windows.zip | cut -d ' ' -f1)
           LIN_SHA=$(sha256sum release/Infinite-Ascension-Linux.zip | cut -d ' ' -f1)
-          WIN_LAUNCHER_SHA=$(sha256sum release/Infinite-Ascension-Launcher.exe | cut -d ' ' -f1)
-          LIN_LAUNCHER_SHA=$(sha256sum release/Infinite-Ascension-Launcher | cut -d ' ' -f1)
+          WIN_LAUNCHER_SHA=$(sha256sum release/Infinite-Ascension-Launcher-Windows.zip | cut -d ' ' -f1)
+          LIN_LAUNCHER_SHA=$(sha256sum release/Infinite-Ascension-Launcher-Linux.zip | cut -d ' ' -f1)
           WIN_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/Infinite-Ascension-Windows.zip"
           LIN_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/Infinite-Ascension-Linux.zip"
-          WIN_LAUNCHER_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/Infinite-Ascension-Launcher.exe"
-          LIN_LAUNCHER_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/Infinite-Ascension-Launcher"
+          WIN_LAUNCHER_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/Infinite-Ascension-Launcher-Windows.zip"
+          LIN_LAUNCHER_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/Infinite-Ascension-Launcher-Linux.zip"
           cat > release/manifest.json <<EOF
           {
             "build": ${GITHUB_RUN_NUMBER},
@@ -124,8 +135,8 @@ jobs:
             "assets": {
               "windows": {"name": "Infinite-Ascension-Windows.zip", "url": "${WIN_URL}", "sha256": "${WIN_SHA}"},
               "linux": {"name": "Infinite-Ascension-Linux.zip", "url": "${LIN_URL}", "sha256": "${LIN_SHA}"},
-              "launcher_windows": {"name": "Infinite-Ascension-Launcher.exe", "url": "${WIN_LAUNCHER_URL}", "sha256": "${WIN_LAUNCHER_SHA}"},
-              "launcher_linux": {"name": "Infinite-Ascension-Launcher", "url": "${LIN_LAUNCHER_URL}", "sha256": "${LIN_LAUNCHER_SHA}"}
+              "launcher_windows": {"name": "Infinite-Ascension-Launcher-Windows.zip", "url": "${WIN_LAUNCHER_URL}", "sha256": "${WIN_LAUNCHER_SHA}"},
+              "launcher_linux": {"name": "Infinite-Ascension-Launcher-Linux.zip", "url": "${LIN_LAUNCHER_URL}", "sha256": "${LIN_LAUNCHER_SHA}"}
             }
           }
           EOF
@@ -138,9 +149,9 @@ jobs:
           gh release create latest \
             --repo "$GITHUB_REPOSITORY" \
             --title "Infinite Ascension — Latest build #${GITHUB_RUN_NUMBER}" \
-            --notes "Build automatique du push ${GITHUB_SHA}. Utilise le launcher pour télécharger cette version automatiquement." \
+            --notes "Build automatique du push ${GITHUB_SHA}. Le launcher vérifie et installe automatiquement la dernière version du jeu." \
             release/Infinite-Ascension-Windows.zip \
             release/Infinite-Ascension-Linux.zip \
-            release/Infinite-Ascension-Launcher.exe \
-            release/Infinite-Ascension-Launcher \
+            release/Infinite-Ascension-Launcher-Windows.zip \
+            release/Infinite-Ascension-Launcher-Linux.zip \
             release/manifest.json

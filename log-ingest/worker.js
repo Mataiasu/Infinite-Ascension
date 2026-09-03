@@ -13,8 +13,23 @@ export default {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors() });
     }
+
+    // Safe health check: never exposes the GitHub token itself.
+    if (request.method === "GET") {
+      return json({
+        ok: true,
+        service: "Infinite Ascension log ingest",
+        github_configured: Boolean(env.GITHUB_TOKEN),
+        repository: env.GITHUB_REPO || "Mataiasu/Infinite-Ascension"
+      });
+    }
+
     if (request.method !== "POST") {
       return json({ error: "POST required" }, 405);
+    }
+
+    if (!env.GITHUB_TOKEN) {
+      return json({ error: "GITHUB_TOKEN secret is not configured" }, 503);
     }
 
     const length = Number(request.headers.get("content-length") || 0);
@@ -64,7 +79,7 @@ export default {
 function cors() {
   return {
     "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type"
   };
 }

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
 import shutil
 import subprocess
-import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -15,19 +15,27 @@ from pathlib import Path
 OWNER = "Mataiasu"
 REPO = "Infinite-Ascension"
 RELEASE_URL = f"https://api.github.com/repos/{OWNER}/{REPO}/releases/tags/latest"
-GAME_WINDOWS = "InfiniteAscension.exe"
-GAME_LINUX = "InfiniteAscension.x86_64"
 LOCAL_VERSION = "version.json"
-
-
-def http_json(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "Infinite-Ascension-Launcher"})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+GAME = {"windows": "InfiniteAscension.exe", "linux": "InfiniteAscension.x86_64"}
 
 
 def app_dir() -> Path:
     return Path(__file__).resolve().parent
+
+
+def get_json(url: str) -> dict:
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "Infinite-Ascension-Launcher"})
+    with urllib.request.urlopen(req, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def platform_key() -> str:
+    system = platform.system().lower()
+    if system == "windows":
+        return "windows"
+    if system == "linux":
+        return "linux"
+    raise RuntimeError(f"Plateforme PC non supportée : {platform.system()}")
 
 
 def local_build() -> int:
@@ -38,47 +46,47 @@ def local_build() -> int:
         return 0
 
 
-def target_asset() -> tuple[str, str]:
-    system = platform.system().lower()
-    if system == "windows":
-        return "Infinite-Ascension-Windows.zip", GAME_WINDOWS
-    if system == "linux":
-        return "Infinite-Ascension-Linux.zip", GAME_LINUX
-    raise RuntimeError(f"Plateforme non supportée par le launcher PC : {platform.system()}")
-
-
-def get_latest() -> tuple[int, str, str]:
-    release = http_json(RELEASE_URL)
-    manifest_asset = next((a for a in release.get("assets", []) if a["name"] == "manifest.json"), None)
+def latest_info() -> tuple[int, str, str, str]:
+    release = get_json(RELEASE_URL)
+    manifest_asset = next((a for a in release.get("assets", []) if a.get("name") == "manifest.json"), None)
     if not manifest_asset:
-        raise RuntimeError("La release latest ne contient pas manifest.json.")
-    manifest = http_json(manifest_asset["browser_download_url"])
-    asset_name, _ = target_asset()
-    asset = next((a for a in release.get("assets", []) if a["name"] == asset_name), None)
-    if not asset:
-        raise RuntimeError(f"Build absente : {asset_name}")
-    return int(manifest.get("build", 0)), asset["browser_download_url"], manifest.get("commit", "")
+        raise RuntimeError("manifest.json absent de la release latest.")
+    manifest = get_json(manifest_asset["browser_download_url"])
+    key = platform_key()
+    asset_info = manifest.get("assets", {}).get(key)
+    if not asset_info:
+        raise RuntimeError(f"Aucun build {key} dans latest.")
+    return int(manifest.get("build", 0)), asset_info["url"], asset_info["sha256"], str(manifest.get("commit", ""))
 
 
 def download(url: str, destination: Path) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "Infinite-Ascension-Launcher"})
-    with urllib.request.urlopen(request, timeout=120) as response, destination.open("wb") as output:
+    req = urllib.request.Request(url, headers={"User-Agent": "Infinite-Ascension-Launcher"})
+    with urllib.request.urlopen(req, timeout=180) as response, destination.open("wb") as output:
         shutil.copyfileobj(response, output)
 
 
-def install(url: str) -> None:
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def install(url: str, expected_sha: str) -> None:
     root = app_dir()
     with tempfile.TemporaryDirectory(prefix="infinite_ascension_") as temp:
         archive = Path(temp) / "game.zip"
-        unpacked = Path(temp) / "unpacked"
+        unpacked = Path(temp) / "game"
         unpacked.mkdir()
         download(url, archive)
+        actual = sha256(archive)
+        if actual.lower() != expected_sha.lower():
+            raise RuntimeError("Échec de vérification SHA-256 de la mise à jour.")
         with zipfile.ZipFile(archive, "r") as zf:
             zf.extractall(unpacked)
         for item in unpacked.iterdir():
             destination = root / item.name
-            if destination.name.lower().endswith("launcher.exe"):
-                continue
             if item.is_dir():
                 if destination.exists():
                     shutil.rmtree(destination)
@@ -88,30 +96,34 @@ def install(url: str) -> None:
 
 
 def launch() -> None:
-    root = app_dir()
-    system = platform.system().lower()
-    executable = root / (GAME_WINDOWS if system == "windows" else GAME_LINUX)
+    key = platform_key()
+    executable = app_dir() / GAME[key]
     if not executable.exists():
-        raise RuntimeError(f"Jeu introuvable : {executable}")
-    if system == "linux":
+        raise RuntimeError(f"Exécutable introuvable : {executable}")
+    if key == "linux":
         executable.chmod(executable.stat().st_mode | 0o111)
-    subprocess.Popen([str(executable)], cwd=str(root))
+    subprocess.Popen([str(executable)], cwd=str(app_dir()))
 
 
 def main() -> None:
-    print("Infinite Ascension Launcher")
+    print("========================================")
+    print("       INFINITE ASCENSION LAUNCHER")
+    print("========================================")
     try:
-        latest_build, url, commit = get_latest()
+        latest_build, url, expected_sha, commit = latest_info()
         current = local_build()
-        print(f"Version locale : {current} | dernière build : {latest_build}")
+        print(f"Build locale : {current}")
+        print(f"Build serveur : {latest_build}")
         if latest_build > current:
-            print("Mise à jour disponible. Téléchargement...")
-            install(url)
-            print(f"Mise à jour terminée. Commit : {commit[:8]}")
+            print("Mise à jour disponible...")
+            install(url, expected_sha)
+            print(f"Mise à jour terminée ({commit[:8]}).")
+        else:
+            print("Jeu déjà à jour.")
         launch()
     except (urllib.error.URLError, OSError, RuntimeError, zipfile.BadZipFile) as exc:
-        print(f"Erreur launcher : {exc}")
-        print("Démarrage local du jeu si disponible...")
+        print(f"Mise à jour indisponible : {exc}")
+        print("Tentative de lancement de la version locale...")
         try:
             launch()
         except Exception as fallback:

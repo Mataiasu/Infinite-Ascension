@@ -3,64 +3,45 @@ name: Patch Launcher UI
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  patch:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+  validate:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Patch Windows launcher
+      - name: Validate Windows launcher UI
         shell: bash
         run: |
-          python3 <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('launcher/windows/Program.cs')
-          s = path.read_text(encoding='utf-8')
+          path = Path("launcher/windows/Program.cs")
+          s = path.read_text(encoding="utf-8")
 
-          def replace(old, new, label):
-              global s
-              if old not in s:
-                  raise SystemExit(f'Missing patch anchor: {label}')
-              s = s.replace(old, new, 1)
+          required = [
+              "private readonly Button stop = new();",
+              "private readonly Button settings = new();",
+              "private Process? gameProcess;",
+              "private bool autoUpdate = true;",
+              "private bool uploadLogs = true;",
+              "private bool confirmClose = true;",
+              "private void StopGame()",
+              "private void ShowSettings()",
+              "private void LoadSettings()",
+              "private void SaveSettings()",
+          ]
 
-          replace('''    private readonly Button logs = new();\n    private bool busy;''', '''    private readonly Button logs = new();\n    private readonly Button stop = new();\n    private readonly Button settings = new();\n    private Process? gameProcess;\n    private bool busy;\n    private bool autoUpdate = true;\n    private bool uploadLogs = true;\n    private bool confirmClose = true;''', 'fields')
+          missing = [item for item in required if item not in s]
+          if missing:
+              print("Launcher validation failed. Missing:")
+              for item in missing:
+                  print(f"- {item}")
+              raise SystemExit(1)
 
-          replace('''    private string LogEndpointPath => Path.Combine(RootDir, "log_endpoint.txt");''', '''    private string LogEndpointPath => Path.Combine(RootDir, "log_endpoint.txt");\n    private string SettingsPath => Path.Combine(RootDir, "launcher_settings.json");''', 'settings path')
-
-          replace('''        Directory.CreateDirectory(LogsDir);\n        LogLauncher("Launcher démarré.");''', '''        Directory.CreateDirectory(LogsDir);\n        LoadSettings();\n        LogLauncher("Launcher démarré.");''', 'load settings')
-
-          replace('''        ConfigureButton(logs, "▣  JOURNAUX", new Point(540, 247), Color.FromArgb(38, 47, 70));\n        logs.Size = new Size(100, 58);\n        logs.Font = new Font("Segoe UI", 9, FontStyle.Bold);\n        logs.Click += (_, _) => OpenLogs();\n\n        var footer = new Label''', '''        ConfigureButton(logs, "▣  JOURNAUX", new Point(450, 247), Color.FromArgb(38, 47, 70));\n        logs.Size = new Size(135, 58);\n        logs.Font = new Font("Segoe UI", 9, FontStyle.Bold);\n        logs.Click += (_, _) => OpenLogs();\n\n        ConfigureButton(stop, "■  ARRÊTER", new Point(595, 247), Color.FromArgb(92, 42, 55));\n        stop.Size = new Size(135, 58);\n        stop.Font = new Font("Segoe UI", 9, FontStyle.Bold);\n        stop.Enabled = false;\n        stop.Click += (_, _) => StopGame();\n\n        ConfigureButton(settings, "⚙  PARAMÈTRES", new Point(60, 325), Color.FromArgb(38, 47, 70));\n        settings.Size = new Size(220, 52);\n        settings.Click += (_, _) => ShowSettings();\n\n        var footer = new Label''', 'buttons')
-
-          replace('''            Location = new Point(20, 350)''', '''            Location = new Point(20, 405)''', 'footer position')
-
-          replace('''        Shown += async (_, _) => await CheckAndUpdateAsync(false);''', '''        Shown += async (_, _) =>\n        {\n            if (autoUpdate)\n                await CheckAndUpdateAsync(false);\n            else\n            {\n                status.Text = File.Exists(GamePath) ? "Mise à jour automatique désactivée. Prêt à jouer." : "Jeu non installé. Utilisez METTRE À JOUR.";\n                SetButtons(true);\n            }\n        };''', 'startup update')
-
-          replace('''            process.Start();\n            process.BeginOutputReadLine();\n            process.BeginErrorReadLine();\n            SetButtons(false);''', '''            process.Start();\n            gameProcess = process;\n            process.BeginOutputReadLine();\n            process.BeginErrorReadLine();\n            SetButtons(true);''', 'process tracking')
-
-          replace('''            process.Dispose();\n            try''', '''            gameProcess = null;\n            process.Dispose();\n            try''', 'clear process')
-
-          replace('''            var log = File.Exists(GameLog) ? await File.ReadAllTextAsync(GameLog, Encoding.UTF8) : "";''', '''            if (!uploadLogs)\n            {\n                LogLauncher("Upload des logs désactivé dans les paramètres.");\n                return;\n            }\n\n            var log = File.Exists(GameLog) ? await File.ReadAllTextAsync(GameLog, Encoding.UTF8) : "";''', 'upload setting')
-
-          replace('''    private void SetButtons(bool enabled)\n    {\n        play.Enabled = enabled;\n        update.Enabled = enabled;\n        logs.Enabled = enabled;\n    }''', '''    private void StopGame()\n    {\n        var process = gameProcess;\n        if (process == null || process.HasExited)\n        {\n            status.Text = "Aucun jeu en cours.";\n            stop.Enabled = false;\n            return;\n        }\n\n        if (confirmClose)\n        {\n            var answer = MessageBox.Show(this, "Fermer Infinite Ascension ?", "Fermer le jeu", MessageBoxButtons.YesNo, MessageBoxIcon.Question);\n            if (answer != DialogResult.Yes) return;\n        }\n\n        try\n        {\n            LogLauncher("Fermeture du jeu demandée depuis le launcher.");\n            status.Text = "Fermeture du jeu…";\n            if (!process.HasExited)\n            {\n                try\n                {\n                    process.CloseMainWindow();\n                    if (!process.WaitForExit(5000) && !process.HasExited)\n                        process.Kill(true);\n                }\n                catch\n                {\n                    if (!process.HasExited) process.Kill(true);\n                }\n            }\n        }\n        catch (Exception ex)\n        {\n            LogLauncher($"ERREUR fermeture jeu : {ex}");\n            status.Text = $"Impossible de fermer le jeu : {ex.Message}";\n        }\n    }\n\n    private void LoadSettings()\n    {\n        try\n        {\n            if (!File.Exists(SettingsPath)) return;\n            using var doc = JsonDocument.Parse(File.ReadAllText(SettingsPath));\n            var root = doc.RootElement;\n            if (root.TryGetProperty("autoUpdate", out var a)) autoUpdate = a.GetBoolean();\n            if (root.TryGetProperty("uploadLogs", out var u)) uploadLogs = u.GetBoolean();\n            if (root.TryGetProperty("confirmClose", out var c)) confirmClose = c.GetBoolean();\n        }\n        catch (Exception ex)\n        {\n            LogLauncher($"ERREUR lecture paramètres : {ex.Message}");\n        }\n    }\n\n    private void SaveSettings()\n    {\n        try\n        {\n            Directory.CreateDirectory(RootDir);\n            var json = JsonSerializer.Serialize(new { autoUpdate, uploadLogs, confirmClose }, new JsonSerializerOptions { WriteIndented = true });\n            File.WriteAllText(SettingsPath, json, Encoding.UTF8);\n            LogLauncher("Paramètres enregistrés.");\n        }\n        catch (Exception ex)\n        {\n            LogLauncher($"ERREUR sauvegarde paramètres : {ex.Message}");\n        }\n    }\n\n    private void ShowSettings()\n    {\n        using var form = new Form\n        {\n            Text = "Paramètres — Infinite Ascension",\n            ClientSize = new Size(430, 245),\n            FormBorderStyle = FormBorderStyle.FixedDialog,\n            MaximizeBox = false,\n            MinimizeBox = false,\n            StartPosition = FormStartPosition.CenterParent,\n            BackColor = BackColor,\n            ForeColor = ForeColor\n        };\n\n        var auto = new CheckBox { Text = "Vérifier les mises à jour au démarrage", Checked = autoUpdate, AutoSize = true, Location = new Point(25, 25), ForeColor = ForeColor, BackColor = BackColor };\n        var upload = new CheckBox { Text = "Envoyer les logs de session automatiquement", Checked = uploadLogs, AutoSize = true, Location = new Point(25, 65), ForeColor = ForeColor, BackColor = BackColor };\n        var confirm = new CheckBox { Text = "Demander confirmation avant de fermer le jeu", Checked = confirmClose, AutoSize = true, Location = new Point(25, 105), ForeColor = ForeColor, BackColor = BackColor };\n        form.Controls.Add(auto);\n        form.Controls.Add(upload);\n        form.Controls.Add(confirm);\n\n        var save = new Button { Text = "ENREGISTRER", DialogResult = DialogResult.OK, Size = new Size(155, 42), Location = new Point(235, 165), BackColor = Color.FromArgb(110, 67, 191), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };\n        var cancel = new Button { Text = "ANNULER", DialogResult = DialogResult.Cancel, Size = new Size(120, 42), Location = new Point(100, 165), BackColor = Color.FromArgb(38, 47, 70), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };\n        form.Controls.Add(save);\n        form.Controls.Add(cancel);\n        form.AcceptButton = save;\n        form.CancelButton = cancel;\n\n        if (form.ShowDialog(this) == DialogResult.OK)\n        {\n            autoUpdate = auto.Checked;\n            uploadLogs = upload.Checked;\n            confirmClose = confirm.Checked;\n            SaveSettings();\n        }\n    }\n\n    private void SetButtons(bool enabled)\n    {\n        var running = gameProcess is { HasExited: false };\n        play.Enabled = enabled && !running;\n        update.Enabled = enabled && !running;\n        logs.Enabled = enabled;\n        settings.Enabled = enabled;\n        stop.Enabled = enabled && running;\n    }''', 'settings methods')
-
-          path.write_text(s, encoding='utf-8')
-          print('Launcher patch applied successfully.')
+          print("Launcher UI validation passed.")
           PY
-
-      - name: Commit launcher changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add launcher/windows/Program.cs
-          if git diff --cached --quiet; then
-            echo "No launcher changes needed."
-          else
-            git commit -m "feat: launcher settings and stop game [skip ci]"
-            git push
-          fi

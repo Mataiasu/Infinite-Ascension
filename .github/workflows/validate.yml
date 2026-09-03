@@ -20,30 +20,22 @@ jobs:
         with:
           version: 4.4.1-stable
           export-templates: true
-      - name: Parse every GDScript
+      - name: Validate project files and autoloads
         shell: bash
         run: |
           set -o pipefail
-          mapfile -t scripts < <(find . -type f -name '*.gd' -not -path './.git/*' -not -path './.godot/*' | sort)
-          if [ "${#scripts[@]}" -eq 0 ]; then
-            echo "No GDScript files found."
+          godot --headless --path . --editor --quit 2>&1 | tee godot-editor-validation.log
+          if grep -Eq 'SCRIPT ERROR:|Failed to load script|Failed to create an autoload|Parse Error:' godot-editor-validation.log; then
+            echo 'Godot project validation failed.'
             exit 1
           fi
-          failed=0
-          for script in "${scripts[@]}"; do
-            echo "=== Checking ${script} ==="
-            if ! godot --headless --path . --check-only --script "${script}"; then
-              failed=1
-            fi
-          done
-          exit "$failed"
-      - name: Validate root project initialization
+      - name: Run main scene smoke test
         shell: bash
         run: |
           set -o pipefail
-          godot --headless --path . --editor --quit 2>&1 | tee godot-validation.log
-          if grep -Eq 'SCRIPT ERROR:|Failed to load script|Failed to create an autoload' godot-validation.log; then
-            echo 'Godot script errors detected during project initialization.'
+          godot --headless --path . --quit-after 3 2>&1 | tee godot-runtime-validation.log
+          if grep -Eq 'SCRIPT ERROR:|Failed to load script|Failed to create an autoload|Parse Error:|ERROR: Cannot get class|Invalid call' godot-runtime-validation.log; then
+            echo 'Godot runtime smoke test failed.'
             exit 1
           fi
 

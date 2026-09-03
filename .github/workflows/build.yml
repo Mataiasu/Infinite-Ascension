@@ -1,25 +1,135 @@
-name: Build
+name: Build and Publish
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  package-source:
+  game:
+    name: Build Windows + Linux game
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Godot 4.4.1
+        uses: solarlabyrinth/action-setup-godot@v3
+        with:
+          version: 4.4.1-stable
+          export-templates: true
+
+      - name: Validate project
+        run: godot --headless --path . --editor --quit
+
+      - name: Export Windows
+        run: |
+          mkdir -p dist/windows
+          godot --headless --path . --export-release "Windows Desktop" dist/windows/InfiniteAscension.exe
+
+      - name: Export Linux
+        run: |
+          mkdir -p dist/linux
+          godot --headless --path . --export-release "Linux/X11" dist/linux/InfiniteAscension.x86_64
+          chmod +x dist/linux/InfiniteAscension.x86_64
+
+      - name: Add build version
+        run: |
+          printf '{"build":%s,"commit":"%s"}\n' "${GITHUB_RUN_NUMBER}" "${GITHUB_SHA}" > dist/windows/version.json
+          cp dist/windows/version.json dist/linux/version.json
+
+      - name: Package Windows
+        run: |
+          cd dist/windows
+          zip -r ../Infinite-Ascension-Windows.zip .
+
+      - name: Package Linux
+        run: |
+          cd dist/linux
+          zip -r ../Infinite-Ascension-Linux.zip .
+
+      - name: Upload game packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-packages
+          path: dist/Infinite-Ascension-*.zip
+          retention-days: 7
+
+  launcher-windows:
+    name: Build Windows launcher
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Package project source
-        run: |
-          mkdir -p dist
-          zip -r "dist/Infinite-Ascension-${GITHUB_REF_NAME}.zip" . \
-            -x '.git/*' '.godot/*' 'dist/*'
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/setup-python@v5
         with:
-          generate_release_notes: true
-          files: dist/*.zip
+          python-version: '3.12'
+      - run: python -m pip install -r launcher/requirements.txt
+      - run: pyinstaller --onefile --name Infinite-Ascension-Launcher launcher/launcher.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-windows
+          path: dist/Infinite-Ascension-Launcher.exe
+          retention-days: 7
+
+  launcher-linux:
+    name: Build Linux launcher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r launcher/requirements.txt
+      - run: pyinstaller --onefile --name Infinite-Ascension-Launcher launcher/launcher.py
+      - run: chmod +x dist/Infinite-Ascension-Launcher
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-linux
+          path: dist/Infinite-Ascension-Launcher
+          retention-days: 7
+
+  publish:
+    name: Publish latest release
+    needs: [game, launcher-windows, launcher-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          path: release
+          merge-multiple: true
+
+      - name: Prepare manifest
+        shell: bash
+        run: |
+          WIN_SHA=$(sha256sum release/Infinite-Ascension-Windows.zip | cut -d ' ' -f1)
+          LIN_SHA=$(sha256sum release/Infinite-Ascension-Linux.zip | cut -d ' ' -f1)
+          WIN_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/Infinite-Ascension-Windows.zip"
+          LIN_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/Infinite-Ascension-Linux.zip"
+          cat > release/manifest.json <<EOF
+          {
+            "build": ${GITHUB_RUN_NUMBER},
+            "commit": "${GITHUB_SHA}",
+            "assets": {
+              "windows": {"name": "Infinite-Ascension-Windows.zip", "url": "${WIN_URL}", "sha256": "${WIN_SHA}"},
+              "linux": {"name": "Infinite-Ascension-Linux.zip", "url": "${LIN_URL}", "sha256": "${LIN_SHA}"}
+            }
+          }
+          EOF
+
+      - name: Replace latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest \
+            --title "Infinite Ascension — Latest build #${GITHUB_RUN_NUMBER}" \
+            --notes "Build automatique du push ${GITHUB_SHA}. Le launcher PC récupère cette version automatiquement." \
+            release/Infinite-Ascension-Windows.zip \
+            release/Infinite-Ascension-Linux.zip \
+            release/Infinite-Ascension-Launcher.exe \
+            release/Infinite-Ascension-Launcher \
+            release/manifest.json

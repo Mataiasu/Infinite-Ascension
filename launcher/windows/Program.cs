@@ -22,6 +22,7 @@ internal static class Program
 internal sealed class LauncherForm : Form
 {
     private const string ManifestUrl = "https://github.com/Mataiasu/Infinite-Ascension/releases/download/latest/manifest.json";
+    private const string DefaultLogEndpoint = "https://infinite-ascension-log-ingest.matthprizee55.workers.dev/";
     private const string GameExe = "InfiniteAscension.exe";
 
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromMinutes(10) };
@@ -353,7 +354,6 @@ internal sealed class LauncherForm : Form
         int exitCode = -1;
         try
         {
-            // WaitForExit ensures asynchronous stdout/stderr events have been drained before reading the log.
             process.WaitForExit();
             exitCode = process.ExitCode;
             LogLauncher($"Jeu terminé avec code {exitCode}.");
@@ -384,6 +384,8 @@ internal sealed class LauncherForm : Form
         var endpoint = Environment.GetEnvironmentVariable("INFINITE_ASCENSION_LOG_ENDPOINT");
         if (string.IsNullOrWhiteSpace(endpoint) && File.Exists(LogEndpointPath))
             endpoint = File.ReadAllText(LogEndpointPath, Encoding.UTF8).Trim();
+        if (string.IsNullOrWhiteSpace(endpoint))
+            endpoint = DefaultLogEndpoint;
         return string.IsNullOrWhiteSpace(endpoint) ? null : endpoint.Trim();
     }
 
@@ -412,37 +414,19 @@ internal sealed class LauncherForm : Form
             });
 
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
-            request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/5.0");
-            using var response = await http.SendAsync(request);
-            var responseText = await response.Content.ReadAsStringAsync();
+            using var response = await http.PostAsync(endpoint, content);
+            var body = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException($"HTTP {(int)response.StatusCode}: {responseText}");
+            {
+                LogLauncher($"ERREUR upload logs HTTP {(int)response.StatusCode}: {body}");
+                return;
+            }
 
-            LogLauncher("Upload automatique du log réussi.");
+            LogLauncher($"Upload logs réussi : {body}");
         }
         catch (Exception ex)
         {
-            // Logging must never prevent the player from closing the game/launcher.
-            LogLauncher($"Upload automatique du log échoué : {ex.Message}");
-        }
-    }
-
-    private void OpenLogs()
-    {
-        try
-        {
-            Directory.CreateDirectory(LogsDir);
-            File.WriteAllText(Path.Combine(LogsDir, "README.txt"),
-                "Infinite Ascension — journaux\r\n\r\n" +
-                "launcher.log = journal du launcher\r\n" +
-                "game.log = sortie stdout/stderr du jeu, utile pour diagnostiquer les erreurs Godot\r\n\r\n" +
-                "L'upload automatique est configuré via INFINITE_ASCENSION_LOG_ENDPOINT ou log_endpoint.txt.\r\n", Encoding.UTF8);
-            Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = $"\"{LogsDir}\"", UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            LogLauncher($"ERREUR ouverture logs : {ex}");
+            LogLauncher($"ERREUR upload logs : {ex}");
         }
     }
 
@@ -450,6 +434,25 @@ internal sealed class LauncherForm : Form
     {
         play.Enabled = enabled;
         update.Enabled = enabled;
-        logs.Enabled = true;
+        logs.Enabled = enabled;
+    }
+
+    private void OpenLogs()
+    {
+        try
+        {
+            Directory.CreateDirectory(LogsDir);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"\"{LogsDir}\"",
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            LogLauncher($"ERREUR ouverture logs : {ex}");
+            status.Text = $"Impossible d'ouvrir les journaux : {ex.Message}";
+        }
     }
 }

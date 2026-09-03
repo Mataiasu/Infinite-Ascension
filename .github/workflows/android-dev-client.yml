@@ -1,0 +1,65 @@
+name: Android Dev Client
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android local PC dev client APK
+    runs-on: ubuntu-latest
+    env:
+      GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /home/runner/.android/debug.keystore
+      GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+      GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.1" "cmdline-tools;latest"
+      - name: Create debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+      - uses: solarlabyrinth/action-setup-godot@v3
+        with:
+          version: 4.4.1-stable
+          export-templates: true
+      - name: Initialize Godot
+        run: godot --headless --path . --editor --quit
+      - name: Configure Godot Android
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$HOME/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+      - name: Export Android Dev Client
+        run: |
+          mkdir -p dist
+          godot --headless --path . --export-debug "Android Dev Client" dist/Infinite-Ascension-Android-Dev-unsigned.apk
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.1"
+          "$BUILD_TOOLS/zipalign" -p -f 4 dist/Infinite-Ascension-Android-Dev-unsigned.apk dist/Infinite-Ascension-Android-Dev.apk
+          "$BUILD_TOOLS/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out dist/Infinite-Ascension-Android-Dev.apk dist/Infinite-Ascension-Android-Dev.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose dist/Infinite-Ascension-Android-Dev.apk
+          rm dist/Infinite-Ascension-Android-Dev-unsigned.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Infinite-Ascension-Android-Dev
+          path: dist/Infinite-Ascension-Android-Dev.apk
+          retention-days: 14

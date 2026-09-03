@@ -228,7 +228,7 @@ func _build_player() -> void:
     player.add_child(light)
 
 func _build_camera() -> void:
-    # Camera rig is a sibling of Player, so rotating the player can never rotate the camera.
+    # Independent camera rig: Player rotation can never rotate the camera.
     camera_pivot = Node3D.new()
     camera_pivot.name = "CameraPivot"
     add_child(camera_pivot)
@@ -251,8 +251,7 @@ func _move_player(delta: float) -> void:
     if player == null or not is_instance_valid(player) or camera_pivot == null:
         return
 
-    # Standard Godot InputMap movement: keyboard actions only affect the player.
-    # The mouse is handled separately in _input() and only rotates the camera rig.
+    # Godot's standard InputMap movement. Keyboard input moves the player only.
     var direction := Vector3.ZERO
     if Input.is_action_pressed("move_right"):
         direction.x += 1.0
@@ -265,7 +264,7 @@ func _move_player(delta: float) -> void:
     if direction != Vector3.ZERO:
         direction = direction.normalized()
 
-    # Keep movement camera-relative, but never rotate the Player or CameraPivot from keyboard input.
+    # Camera-relative movement without rotating either the Player or the camera from keyboard input.
     var forward := -camera_pivot.global_transform.basis.z
     var right := camera_pivot.global_transform.basis.x
     forward.y = 0.0
@@ -368,176 +367,228 @@ func _nearest_enemy(max_distance := ATTACK_RANGE) -> Node3D:
     return nearest
 
 func _enemy_attacks(delta: float) -> void:
-    enemy_attack_timer -= delta
-    if enemy_attack_timer > 0.0:
+    enemy_attack_timer += delta
+    if enemy_attack_timer < 1.3:
         return
+    enemy_attack_timer = 0.0
     for enemy in enemies:
         if not is_instance_valid(enemy):
             continue
         if enemy.global_position.distance_to(player.global_position) <= ENEMY_ATTACK_RANGE:
-            hp = max(0.0, hp - float(enemy.get_meta("damage")))
-            enemy_attack_timer = 1.0
-            _message("%s vous attaque (-%d PV)" % [enemy.get_meta("name"), int(enemy.get_meta("damage"))])
-            if hp <= 0.0:
-                hp = max_hp
-                player.position = Vector3.ZERO
-                _message("Vous êtes tombé. Retour au point de départ.")
-            break
+            hp -= float(enemy.get_meta("damage"))
+    if hp <= 0:
+        _player_defeated()
 
-func _spawn_loop(delta: float) -> void:
-    spawn_timer += delta
-    if spawn_timer >= 3.0:
-        spawn_timer = 0.0
-        _spawn_enemy()
+func _defeat_enemy(enemy: Node3D) -> void:
+    var enemy_level := int(enemy.get_meta("level"))
+    var reward_xp := 18 + enemy_level * 7
+    var reward_gold := 5 + enemy_level * 3
+    xp += reward_xp
+    gold += reward_gold
+    kills += 1
+    power += 1.5 + enemy_level * 0.12
+    _message("Victoire · +%d XP · +%d or" % [reward_xp, reward_gold])
+    enemy.queue_free()
+    enemies.erase(enemy)
 
-func _autosave(delta: float) -> void:
-    autosave_timer += delta
-    if autosave_timer >= 15.0:
-        autosave_timer = 0.0
-        _save_game()
-
-func _gain_xp(amount: float) -> void:
-    xp += amount
     while xp >= XP_PER_LEVEL:
         xp -= XP_PER_LEVEL
         level += 1
-        power += 3.0
-        max_hp += 8.0
+        max_hp += 12 + reborn * 2
         hp = max_hp
-        _message("Niveau %d atteint !" % level)
-        if level >= REBORN_LEVEL:
-            reborn_button.disabled = false
+        power += 8 + reborn * 2
+        _message("Niveau %d atteint" % level)
+        if level % 5 == 0:
+            _update_frontier()
+
+func _player_defeated() -> void:
+    level = 0
+    xp = 0.0
+    power = 25.0
+    max_hp = 100.0
+    hp = max_hp
+    player.velocity = Vector3.ZERO
+    player.position = Vector3(0, 1.0, 0)
+    _update_frontier()
+    _apply_zone_visuals()
+    _message("Défaite · retour niveau 0 · progression de test réinitialisée")
+    _save()
+    _refresh_hud()
+
+func _spawn_loop(delta: float) -> void:
+    spawn_timer += delta
+    if spawn_timer >= 4.0:
+        spawn_timer = 0
+        if enemies.size() < MAX_ENEMIES:
+            _spawn_enemy()
 
 func _update_frontier() -> void:
-    frontier_min = max(1, 1 + zone_index * 5 + reborn * 2)
+    var average := (level + group_levels_average()) / 2.0
+    frontier_min = max(1, int(floor(average)))
     frontier_max = frontier_min + 4
+    zone_index = clamp(int(level / 10), 0, zone_names.size() - 1)
+
+func group_levels_average() -> float:
+    return float(level + max(1, level - 1) + level + 1) / 3.0
 
 func _apply_zone_visuals() -> void:
-    var ground := get_node_or_null("WorldGround/MeshInstance3D") as MeshInstance3D
-    if ground != null:
-        var mat := ground.material_override as StandardMaterial3D
-        if mat != null:
-            mat.albedo_color = zone_colors[clamp(zone_index, 0, zone_colors.size() - 1)]
+    var world_ground := get_node_or_null("WorldGround/MeshInstance3D")
+    if world_ground:
+        var mat := world_ground.material_override as StandardMaterial3D
+        if mat:
+            mat.albedo_color = zone_colors[zone_index]
 
-func _refresh_hud() -> void:
-    if level_label != null:
-        level_label.text = "Niveau %d  •  Reborn %d" % [level, reborn]
-    if hp_label != null:
-        hp_label.text = "PV : %d / %d" % [int(hp), int(max_hp)]
-    if xp_label != null:
-        xp_label.text = "XP : %d / %d" % [int(xp), int(XP_PER_LEVEL)]
-    if zone_label != null:
-        zone_label.text = "%s  •  %s  •  Niveaux %d–%d" % [zone_names[zone_index], zone_biomes[zone_index], frontier_min, frontier_max]
-    if stats_label != null:
-        stats_label.text = "Puissance %d  •  Or %d  •  Kills %d  •  Dégâts %d" % [int(power), gold, kills, total_damage]
-    if hint_label != null:
-        hint_label.text = "WASD : déplacer  •  Souris : caméra  •  Espace / clic gauche : attaque  •  Échap : libérer la souris"
-    if reborn_button != null:
-        reborn_button.visible = level >= REBORN_LEVEL
-        reborn_button.disabled = level < REBORN_LEVEL
-    if crosshair != null:
-        crosshair.text = "+"
+func _reborn() -> void:
+    if level < REBORN_LEVEL:
+        _message("Reborn disponible au niveau %d." % REBORN_LEVEL)
+        return
+    reborn += 1
+    level = 1
+    xp = 0
+    power = 25 + reborn * 12
+    max_hp = 100 + reborn * 15
+    hp = max_hp
+    gold += 100 + reborn * 50
+    _update_frontier()
+    _apply_zone_visuals()
+    _message("REBORN %d · bonus permanent obtenu" % reborn)
+    _save()
 
 func _build_hud() -> void:
     var layer := CanvasLayer.new()
     layer.name = "HUD"
     add_child(layer)
 
-    level_label = Label.new()
-    level_label.position = Vector2(24, 20)
-    level_label.add_theme_font_size_override("font_size", 22)
-    layer.add_child(level_label)
+    var top := PanelContainer.new()
+    top.position = Vector2(18, 16)
+    top.size = Vector2(560, 112)
+    top.add_theme_stylebox_override("panel", _panel(Color("#0b1020dd")))
+    layer.add_child(top)
+    var box := VBoxContainer.new()
+    box.add_theme_constant_override("separation", 4)
+    top.add_child(box)
 
-    hp_label = Label.new()
-    hp_label.position = Vector2(24, 55)
-    layer.add_child(hp_label)
+    level_label = _label("NIVEAU 1 · REBORN 0", 20, Color("#f0f2ff"))
+    box.add_child(level_label)
+    hp_label = _label("PV", 12, Color("#e98ba4"))
+    box.add_child(hp_label)
+    xp_label = _label("XP", 12, Color("#bca5ff"))
+    box.add_child(xp_label)
+    stats_label = _label("", 11, Color("#a5aec9"))
+    box.add_child(stats_label)
 
-    xp_label = Label.new()
-    xp_label.position = Vector2(24, 82)
-    layer.add_child(xp_label)
+    var zone_panel := PanelContainer.new()
+    zone_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+    zone_panel.position = Vector2(-388, 16)
+    zone_panel.size = Vector2(370, 94)
+    zone_panel.add_theme_stylebox_override("panel", _panel(Color("#0b1020dd")))
+    layer.add_child(zone_panel)
+    var zone_box := VBoxContainer.new()
+    zone_panel.add_child(zone_box)
+    zone_label = _label("", 18, Color("#f0f2ff"))
+    zone_box.add_child(zone_label)
+    combat_label = _label("Explore pour rencontrer des ennemis.\nESPACE / clic gauche : attaquer", 11, Color("#55dfa0"))
+    zone_box.add_child(combat_label)
 
-    zone_label = Label.new()
-    zone_label.position = Vector2(24, 112)
-    layer.add_child(zone_label)
+    crosshair = _label("+", 24, Color("#f0f2ff"))
+    crosshair.set_anchors_preset(Control.PRESET_CENTER)
+    crosshair.position = Vector2(-8, -16)
+    crosshair.size = Vector2(20, 32)
+    layer.add_child(crosshair)
 
-    stats_label = Label.new()
-    stats_label.position = Vector2(24, 142)
-    layer.add_child(stats_label)
-
-    combat_label = Label.new()
-    combat_label.position = Vector2(24, 175)
-    layer.add_child(combat_label)
-
-    hint_label = Label.new()
-    hint_label.position = Vector2(24, 650)
+    hint_label = _label("WASD : se déplacer   •   Souris : caméra   •   Espace/clic : attaquer   •   Échap : libérer la souris", 11, Color("#c1c8df"))
+    hint_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+    hint_label.position = Vector2(18, -48)
+    hint_label.size = Vector2(1100, 30)
     layer.add_child(hint_label)
 
-    message_label = Label.new()
-    message_label.position = Vector2(24, 610)
-    message_label.add_theme_font_size_override("font_size", 18)
+    message_label = _label("", 13, Color("#e7ddff"))
+    message_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+    message_label.position = Vector2(-300, -90)
+    message_label.size = Vector2(600, 36)
+    message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     layer.add_child(message_label)
-
-    crosshair = Label.new()
-    crosshair.position = Vector2(638, 350)
-    crosshair.add_theme_font_size_override("font_size", 28)
-    layer.add_child(crosshair)
 
     reborn_button = Button.new()
     reborn_button.text = "REBORN"
-    reborn_button.position = Vector2(1080, 24)
-    reborn_button.size = Vector2(160, 48)
-    reborn_button.pressed.connect(_do_reborn)
+    reborn_button.position = Vector2(18, 138)
+    reborn_button.size = Vector2(140, 42)
+    reborn_button.pressed.connect(_reborn)
     layer.add_child(reborn_button)
+
+func _label(text: String, size: int, color: Color) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.add_theme_font_size_override("font_size", size)
+    label.add_theme_color_override("font_color", color)
+    return label
+
+func _panel(color: Color) -> StyleBoxFlat:
+    var style := StyleBoxFlat.new()
+    style.bg_color = color
+    style.border_color = Color("#2d3858")
+    style.set_border_width_all(1)
+    style.set_corner_radius_all(12)
+    style.content_margin_left = 12
+    style.content_margin_right = 12
+    style.content_margin_top = 9
+    style.content_margin_bottom = 9
+    return style
+
+func _refresh_hud() -> void:
+    if not player:
+        return
+    level_label.text = "NIVEAU %d · REBORN %d" % [level, reborn]
+    hp_label.text = "PV  %d / %d" % [max(0, int(hp)), int(max_hp)]
+    xp_label.text = "XP  %d / %d" % [int(xp), int(XP_PER_LEVEL)]
+    stats_label.text = "Puissance %d · Or %d · Kills %d" % [int(power), gold, kills]
+    zone_label.text = "%s · %s" % [zone_names[zone_index], zone_biomes[zone_index]]
+    reborn_button.disabled = level < REBORN_LEVEL
 
 func _message(text: String) -> void:
     last_message = text
-    if message_label != null:
+    if message_label:
         message_label.text = text
 
-func _do_reborn() -> void:
-    if level < REBORN_LEVEL:
-        return
-    reborn += 1
-    level = 1
-    xp = 0.0
-    power = 25.0 + reborn * 8.0
-    max_hp = 100.0 + reborn * 20.0
-    hp = max_hp
-    gold += 250 * reborn
-    zone_index = min(zone_index + 1, zone_names.size() - 1)
-    _update_frontier()
-    _apply_zone_visuals()
-    _message("REBORN %d — progression améliorée." % reborn)
-    _save_game()
+func _autosave(delta: float) -> void:
+    autosave_timer += delta
+    if autosave_timer >= 10.0:
+        autosave_timer = 0
+        _save()
 
-func _save_game() -> void:
-    if SaveManager != null and SaveManager.has_method("save_game"):
-        SaveManager.call("save_game", {
-            "level": level,
-            "xp": xp,
-            "reborn": reborn,
-            "power": power,
-            "hp": hp,
-            "max_hp": max_hp,
-            "gold": gold,
-            "kills": kills,
-            "total_damage": total_damage,
-            "zone_index": zone_index
-        })
+func _save() -> void:
+    var data := {
+        "level": level,
+        "xp": xp,
+        "reborn": reborn,
+        "power": power,
+        "hp": hp,
+        "max_hp": max_hp,
+        "gold": gold,
+        "kills": kills,
+        "total_damage": total_damage
+    }
+    var file := FileAccess.open("user://infinite_ascension_save.json", FileAccess.WRITE)
+    if file:
+        file.store_string(JSON.stringify(data))
+        file.close()
 
 func _load_save() -> void:
-    if SaveManager == null or not SaveManager.has_method("load_game"):
+    if not FileAccess.file_exists("user://infinite_ascension_save.json"):
         return
-    var data = SaveManager.call("load_game")
-    if not data is Dictionary:
+    var file := FileAccess.open("user://infinite_ascension_save.json", FileAccess.READ)
+    if not file:
         return
-    level = int(data.get("level", level))
-    xp = float(data.get("xp", xp))
-    reborn = int(data.get("reborn", reborn))
-    power = float(data.get("power", power))
-    hp = float(data.get("hp", hp))
-    max_hp = float(data.get("max_hp", max_hp))
-    gold = int(data.get("gold", gold))
-    kills = int(data.get("kills", kills))
-    total_damage = int(data.get("total_damage", total_damage))
-    zone_index = clamp(int(data.get("zone_index", zone_index)), 0, zone_names.size() - 1)
+    var parsed = JSON.parse_string(file.get_as_text())
+    file.close()
+    if typeof(parsed) != TYPE_DICTIONARY:
+        return
+    level = int(parsed.get("level", level))
+    xp = float(parsed.get("xp", xp))
+    reborn = int(parsed.get("reborn", reborn))
+    power = float(parsed.get("power", power))
+    hp = float(parsed.get("hp", hp))
+    max_hp = float(parsed.get("max_hp", max_hp))
+    gold = int(parsed.get("gold", gold))
+    kills = int(parsed.get("kills", kills))
+    total_damage = int(parsed.get("total_damage", total_damage))

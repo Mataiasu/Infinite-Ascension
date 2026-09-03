@@ -22,13 +22,19 @@ internal sealed class LauncherForm : Form
 {
     private const string ManifestUrl = "https://github.com/Mataiasu/Infinite-Ascension/releases/download/latest/manifest.json";
     private const string GameExe = "InfiniteAscension.exe";
-    private readonly HttpClient http = new() { Timeout = TimeSpan.FromMinutes(5) };
+
+    private readonly HttpClient http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly Label status = new();
     private readonly Label version = new();
     private readonly ProgressBar progress = new();
     private readonly Button play = new();
     private readonly Button update = new();
     private bool busy;
+
+    private string RootDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InfiniteAscension");
+    private string GameDir => Path.Combine(RootDir, "Game");
+    private string StatePath => Path.Combine(RootDir, "launcher_state.json");
+    private string GamePath => Path.Combine(GameDir, GameExe);
 
     public LauncherForm()
     {
@@ -108,7 +114,7 @@ internal sealed class LauncherForm : Form
 
         var footer = new Label
         {
-            Text = "Vérification automatique à chaque ouverture.\nLes pushes publiés produisent une nouvelle build.",
+            Text = "Vérification automatique à chaque ouverture.\nLes mises à jour sont installées dans AppData\\Local.",
             Font = new Font("Segoe UI", 9),
             ForeColor = Color.FromArgb(104, 115, 143),
             BackColor = BackColor,
@@ -121,10 +127,6 @@ internal sealed class LauncherForm : Form
         Shown += async (_, _) => await CheckAndUpdateAsync(false);
     }
 
-    private string InstallDir => AppContext.BaseDirectory;
-    private string GamePath => Path.Combine(InstallDir, GameExe);
-    private string StatePath => Path.Combine(InstallDir, "launcher_state.json");
-
     private int LocalBuild()
     {
         try
@@ -133,13 +135,17 @@ internal sealed class LauncherForm : Form
             using var doc = JsonDocument.Parse(File.ReadAllText(StatePath));
             return doc.RootElement.GetProperty("build").GetInt32();
         }
-        catch { return 0; }
+        catch
+        {
+            return 0;
+        }
     }
 
     private async Task<JsonDocument> GetManifestAsync()
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, ManifestUrl);
-        request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/2.0");
+        var url = $"{ManifestUrl}?t={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/3.0");
         request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
         using var response = await http.SendAsync(request);
         response.EnsureSuccessStatusCode();
@@ -152,21 +158,28 @@ internal sealed class LauncherForm : Form
         if (busy) return;
         busy = true;
         SetButtons(false);
+        progress.Value = 0;
+
         try
         {
+            Directory.CreateDirectory(RootDir);
+            Directory.CreateDirectory(GameDir);
+
             var local = LocalBuild();
             version.Text = $"Build locale : #{local}";
+
             using var manifest = await GetManifestAsync();
             var root = manifest.RootElement;
             var remote = root.GetProperty("build").GetInt32();
             var asset = root.GetProperty("assets").GetProperty("windows");
-            var url = asset.GetProperty("url").GetString()!;
-            var expectedSha = asset.GetProperty("sha256").GetString()!;
+            var url = asset.GetProperty("url").GetString() ?? throw new InvalidOperationException("URL Windows absente du manifeste.");
+            var expectedSha = asset.GetProperty("sha256").GetString() ?? throw new InvalidOperationException("SHA-256 Windows absente du manifeste.");
+
             version.Text = $"Build locale : #{local}   ·   Disponible : #{remote}";
 
             if (!File.Exists(GamePath) || remote > local)
             {
-                await InstallGameAsync(url, expectedSha, remote, root.GetProperty("commit").GetString() ?? "");
+                await InstallGameAsync(url, expectedSha, remote, root.TryGetProperty("commit", out var commitElement) ? commitElement.GetString() ?? "" : "");
                 status.Text = $"Jeu à jour — build #{remote}.";
                 progress.Value = 100;
             }
@@ -192,53 +205,69 @@ internal sealed class LauncherForm : Form
 
     private async Task InstallGameAsync(string url, string expectedSha, int build, string commit)
     {
+        if (Process.GetProcessesByName(Path.GetFileNameWithoutExtension(GameExe)).Length > 0)
+            throw new InvalidOperationException("Le jeu est actuellement lancé. Fermez-le avant de le mettre à jour.");
+
         var tempRoot = Path.Combine(Path.GetTempPath(), "InfiniteAscensionUpdate", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempRoot);
         var archive = Path.Combine(tempRoot, "game.zip");
         var unpack = Path.Combine(tempRoot, "game");
         Directory.CreateDirectory(unpack);
+
         try
         {
             status.Text = "Téléchargement de la mise à jour…";
             progress.Value = 0;
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/2.0");
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            var total = response.Content.Headers.ContentLength ?? 0;
-            await using var source = await response.Content.ReadAsStreamAsync();
-            await using var target = File.Create(archive);
-            var buffer = new byte[1024 * 1024];
-            long done = 0;
-            int read;
-            while ((read = await source.ReadAsync(buffer)) > 0)
+
+            using (var request = new HttpRequestMessage(HttpMethod.Get, url))
             {
-                await target.WriteAsync(buffer.AsMemory(0, read));
-                done += read;
-                if (total > 0) progress.Value = (int)Math.Clamp(done * 100 / total, 0, 100);
+                request.Headers.UserAgent.ParseAdd("Infinite-Ascension-Launcher/3.0");
+                using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+
+                var total = response.Content.Headers.ContentLength ?? 0;
+                await using var source = await response.Content.ReadAsStreamAsync();
+                await using var target = new FileStream(archive, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, useAsync: true);
+                var buffer = new byte[1024 * 1024];
+                long done = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length))) > 0)
+                {
+                    await target.WriteAsync(buffer.AsMemory(0, read));
+                    done += read;
+                    if (total > 0)
+                        progress.Value = (int)Math.Clamp(done * 100L / total, 0, 100);
+                }
+                await target.FlushAsync();
             }
 
             status.Text = "Vérification SHA-256…";
-            await target.FlushAsync();
-            var actualSha = Convert.ToHexString(await SHA256.HashDataAsync(File.OpenRead(archive))).ToLowerInvariant();
+            string actualSha;
+            await using (var shaStream = new FileStream(archive, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                actualSha = Convert.ToHexString(await SHA256.HashDataAsync(shaStream)).ToLowerInvariant();
+            }
+
             if (!actualSha.Equals(expectedSha, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("La vérification SHA-256 a échoué.");
 
-            status.Text = "Installation de la mise à jour…";
+            status.Text = "Extraction de la mise à jour…";
             ZipFile.ExtractToDirectory(archive, unpack, true);
             var extractedGame = Path.Combine(unpack, GameExe);
             if (!File.Exists(extractedGame))
                 throw new InvalidOperationException("L'exécutable du jeu est absent du package.");
 
+            status.Text = "Installation de la mise à jour…";
             foreach (var file in Directory.GetFiles(unpack, "*", SearchOption.AllDirectories))
             {
                 var relative = Path.GetRelativePath(unpack, file);
-                var destination = Path.Combine(InstallDir, relative);
+                var destination = Path.Combine(GameDir, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
                 File.Copy(file, destination, true);
             }
 
-            File.WriteAllText(StatePath, JsonSerializer.Serialize(new { build, commit }, new JsonSerializerOptions { WriteIndented = true }));
+            var stateJson = JsonSerializer.Serialize(new { build, commit }, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(StatePath, stateJson);
         }
         finally
         {
@@ -252,13 +281,14 @@ internal sealed class LauncherForm : Form
         {
             if (!File.Exists(GamePath))
             {
-                status.Text = "Le jeu n'est pas encore installé. Utilise METTRE À JOUR.";
+                status.Text = "Le jeu n'est pas encore installé. Utilisez METTRE À JOUR.";
                 return;
             }
+
             Process.Start(new ProcessStartInfo
             {
                 FileName = GamePath,
-                WorkingDirectory = InstallDir,
+                WorkingDirectory = GameDir,
                 UseShellExecute = true
             });
             Close();

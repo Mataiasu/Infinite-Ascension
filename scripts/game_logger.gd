@@ -7,6 +7,7 @@ const MAX_LOG_BYTES := 1024 * 1024
 const LIVE_UPLOAD_INTERVAL := 20.0
 
 var log_path := DEFAULT_LOG_PATH
+var build := "0"
 var _file: FileAccess
 var _last_flush := 0.0
 var _last_live_upload := 0.0
@@ -23,12 +24,13 @@ func _ready() -> void:
         if not local_app_data.is_empty():
             log_path = local_app_data.path_join(WINDOWS_LOG_RELATIVE)
 
+    build = _detect_build()
     _session_id = "%s-%s" % [str(Time.get_unix_time_from_system()), str(randi())]
     _http = HTTPRequest.new()
     add_child(_http)
     _http.request_completed.connect(_on_upload_completed)
     _open_log()
-    log_event("GAME_START", {"platform": OS.get_name(), "log_path": log_path, "session": _session_id})
+    log_event("GAME_START", {"platform": OS.get_name(), "log_path": log_path, "session": _session_id, "build": build})
 
 func _process(delta: float) -> void:
     _last_flush += delta
@@ -70,11 +72,11 @@ func _upload_live_log() -> void:
         return
     var log := reader.get_as_text()
     reader.close()
-    if log.is_empty() or log.length() > 500000:
+    if log.is_empty() or log.to_utf8_buffer().size() > 500000:
         return
 
     var payload := JSON.stringify({
-        "build": OS.get_environment("INFINITE_ASCENSION_BUILD") if not OS.get_environment("INFINITE_ASCENSION_BUILD").is_empty() else "0",
+        "build": build,
         "session": _session_id,
         "live": true,
         "log": log
@@ -92,6 +94,22 @@ func _on_upload_completed(result: int, response_code: int, _headers: PackedStrin
         log_event("LIVE_LOG_UPLOAD_FAILED", {"result": result, "http": response_code})
     else:
         log_event("LIVE_LOG_UPLOAD_OK", {"http": response_code})
+
+func _detect_build() -> String:
+    var env_build := OS.get_environment("INFINITE_ASCENSION_BUILD").strip_edges()
+    if not env_build.is_empty():
+        return env_build
+
+    var exe_dir := OS.get_executable_path().get_base_dir()
+    var version_path := exe_dir.path_join("version.json")
+    if FileAccess.file_exists(version_path):
+        var version_file := FileAccess.open(version_path, FileAccess.READ)
+        if version_file:
+            var parsed = JSON.parse_string(version_file.get_as_text())
+            version_file.close()
+            if parsed is Dictionary and parsed.has("build"):
+                return str(parsed["build"])
+    return "0"
 
 func _open_log() -> void:
     var directory := log_path.get_base_dir()

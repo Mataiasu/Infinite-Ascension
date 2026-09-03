@@ -1,7 +1,7 @@
 extends Node
 
-# Active combat layer for Infinite Ascension.
-# Left click or Space performs a manual attack on the closest enemy in range.
+# Manual combat layer for Infinite Ascension.
+# Uses input events instead of polling the action map.
 
 const ATTACK_RANGE: float = 6.0
 const ATTACK_COOLDOWN: float = 0.55
@@ -15,24 +15,31 @@ var last_target: Node3D
 
 func _ready() -> void:
     process_priority = 100
-    if not InputMap.has_action("attack"):
-        InputMap.add_action("attack")
-        var key := InputEventKey.new()
-        key.physical_keycode = KEY_SPACE
-        InputMap.action_add_event("attack", key)
     GameLogger.log_event("ACTIVE_ATTACK_READY", {"range": ATTACK_RANGE, "cooldown": ATTACK_COOLDOWN})
 
 func _process(delta: float) -> void:
     cooldown = max(0.0, cooldown - delta)
     if player == null or not is_instance_valid(player):
         player = _find_player()
-    if player == null:
+
+func _input(event: InputEvent) -> void:
+    if get_tree().paused or cooldown > 0.0:
         return
-    if cooldown <= 0.0 and (Input.is_action_just_pressed("attack") or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)):
+    var trigger := false
+    if event is InputEventKey:
+        var key_event := event as InputEventKey
+        trigger = key_event.pressed and not key_event.echo and key_event.physical_keycode == KEY_SPACE
+    elif event is InputEventMouseButton:
+        var mouse_event := event as InputEventMouseButton
+        trigger = mouse_event.pressed and mouse_event.button_index == MOUSE_BUTTON_LEFT
+    if trigger:
         _attack()
 
 func _find_player() -> CharacterBody3D:
-    var found := get_tree().current_scene.find_child("Player", true, false)
+    var scene := get_tree().current_scene
+    if scene == null:
+        return null
+    var found := scene.find_child("Player", true, false)
     return found as CharacterBody3D
 
 func _nearest_enemy() -> Node3D:
@@ -47,23 +54,29 @@ func _nearest_enemy() -> Node3D:
             continue
         if not enemy.has_meta("hp"):
             continue
-        var distance := player.global_position.distance_to(enemy.global_position)
+        var distance: float = player.global_position.distance_to(enemy.global_position)
         if distance <= best:
             best = distance
             nearest = enemy
     return nearest
 
 func _attack() -> void:
+    if player == null or not is_instance_valid(player):
+        player = _find_player()
+    if player == null:
+        GameLogger.log_event("ACTIVE_ATTACK_MISS", {"reason": "player_not_found"})
+        return
+
     cooldown = ATTACK_COOLDOWN
     var target: Node3D = _nearest_enemy()
     if target == null:
         GameLogger.log_event("ACTIVE_ATTACK_MISS", {"reason": "no_target"})
         return
 
+    var runtime: Node = get_tree().current_scene
     var level: int = 1
     var power: float = 25.0
     var reborn: int = 0
-    var runtime: Node = get_tree().current_scene
     if runtime != null:
         var runtime_level: Variant = runtime.get("level")
         var runtime_power: Variant = runtime.get("power")
@@ -98,6 +111,5 @@ func _attack() -> void:
         "remaining_hp": hp
     })
 
-    if hp <= 0.0:
-        if runtime != null and runtime.has_method("_defeat_enemy"):
-            runtime.call("_defeat_enemy", target)
+    if hp <= 0.0 and runtime != null and runtime.has_method("_defeat_enemy"):
+        runtime.call("_defeat_enemy", target)

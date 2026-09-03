@@ -32,7 +32,13 @@ internal sealed class LauncherForm : Form
     private readonly Button play = new();
     private readonly Button update = new();
     private readonly Button logs = new();
+    private readonly Button stop = new();
+    private readonly Button settings = new();
+    private Process? gameProcess;
     private bool busy;
+    private bool autoUpdate = true;
+    private bool uploadLogs = true;
+    private bool confirmClose = true;
 
     private string RootDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InfiniteAscension");
     private string GameDir => Path.Combine(RootDir, "Game");
@@ -42,6 +48,7 @@ internal sealed class LauncherForm : Form
     private string LauncherLog => Path.Combine(LogsDir, "launcher.log");
     private string GameLog => Path.Combine(LogsDir, "game.log");
     private string LogEndpointPath => Path.Combine(RootDir, "log_endpoint.txt");
+    private string SettingsPath => Path.Combine(RootDir, "launcher_settings.json");
 
     public LauncherForm()
     {
@@ -54,6 +61,7 @@ internal sealed class LauncherForm : Form
         StartPosition = FormStartPosition.CenterScreen;
 
         Directory.CreateDirectory(LogsDir);
+        LoadSettings();
         LogLauncher("Launcher démarré.");
 
         var title = new Label
@@ -108,10 +116,20 @@ internal sealed class LauncherForm : Form
         ConfigureButton(update, "↻  METTRE À JOUR", new Point(300, 247), Color.FromArgb(32, 41, 64));
         update.Click += async (_, _) => await CheckAndUpdateAsync(true);
 
-        ConfigureButton(logs, "▣  JOURNAUX", new Point(540, 247), Color.FromArgb(38, 47, 70));
-        logs.Size = new Size(100, 58);
+        ConfigureButton(logs, "▣  JOURNAUX", new Point(450, 247), Color.FromArgb(38, 47, 70));
+        logs.Size = new Size(135, 58);
         logs.Font = new Font("Segoe UI", 9, FontStyle.Bold);
         logs.Click += (_, _) => OpenLogs();
+
+        ConfigureButton(stop, "■  ARRÊTER", new Point(595, 247), Color.FromArgb(92, 42, 55));
+        stop.Size = new Size(135, 58);
+        stop.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+        stop.Enabled = false;
+        stop.Click += (_, _) => StopGame();
+
+        ConfigureButton(settings, "⚙  PARAMÈTRES", new Point(60, 325), Color.FromArgb(38, 47, 70));
+        settings.Size = new Size(220, 52);
+        settings.Click += (_, _) => ShowSettings();
 
         var footer = new Label
         {
@@ -121,11 +139,20 @@ internal sealed class LauncherForm : Form
             BackColor = BackColor,
             TextAlign = ContentAlignment.MiddleCenter,
             Size = new Size(660, 55),
-            Location = new Point(20, 350)
+            Location = new Point(20, 405)
         };
         Controls.Add(footer);
 
-        Shown += async (_, _) => await CheckAndUpdateAsync(false);
+        Shown += async (_, _) =>
+        {
+            if (autoUpdate)
+                await CheckAndUpdateAsync(false);
+            else
+            {
+                status.Text = File.Exists(GamePath) ? "Mise à jour automatique désactivée. Prêt à jouer." : "Jeu non installé. Utilisez METTRE À JOUR.";
+                SetButtons(true);
+            }
+        };
     }
 
     private void ConfigureButton(Button button, string text, Point location, Color backColor)
@@ -336,9 +363,10 @@ internal sealed class LauncherForm : Form
             process.Exited += async (_, _) => await HandleGameExitAsync(process, sessionId);
 
             process.Start();
+            gameProcess = process;
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            SetButtons(false);
+            SetButtons(true);
             status.Text = "Infinite Ascension est lancé. Les logs sont enregistrés automatiquement.";
         }
         catch (Exception ex)
@@ -365,6 +393,7 @@ internal sealed class LauncherForm : Form
         }
         finally
         {
+            gameProcess = null;
             process.Dispose();
             try
             {
@@ -400,6 +429,12 @@ internal sealed class LauncherForm : Form
 
         try
         {
+            if (!uploadLogs)
+            {
+                LogLauncher("Upload des logs désactivé dans les paramètres.");
+                return;
+            }
+
             var log = File.Exists(GameLog) ? await File.ReadAllTextAsync(GameLog, Encoding.UTF8) : "";
             var payload = JsonSerializer.Serialize(new
             {
@@ -430,11 +465,124 @@ internal sealed class LauncherForm : Form
         }
     }
 
+    private void StopGame()
+    {
+        var process = gameProcess;
+        if (process == null || process.HasExited)
+        {
+            status.Text = "Aucun jeu en cours.";
+            stop.Enabled = false;
+            return;
+        }
+
+        if (confirmClose)
+        {
+            var answer = MessageBox.Show(this, "Fermer Infinite Ascension ?", "Fermer le jeu", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer != DialogResult.Yes) return;
+        }
+
+        try
+        {
+            LogLauncher("Fermeture du jeu demandée depuis le launcher.");
+            status.Text = "Fermeture du jeu…";
+            if (!process.HasExited)
+            {
+                try
+                {
+                    process.CloseMainWindow();
+                    if (!process.WaitForExit(5000) && !process.HasExited)
+                        process.Kill(true);
+                }
+                catch
+                {
+                    if (!process.HasExited) process.Kill(true);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogLauncher($"ERREUR fermeture jeu : {ex}");
+            status.Text = $"Impossible de fermer le jeu : {ex.Message}";
+        }
+    }
+
+    private void LoadSettings()
+    {
+        try
+        {
+            if (!File.Exists(SettingsPath)) return;
+            using var doc = JsonDocument.Parse(File.ReadAllText(SettingsPath));
+            var root = doc.RootElement;
+            if (root.TryGetProperty("autoUpdate", out var a)) autoUpdate = a.GetBoolean();
+            if (root.TryGetProperty("uploadLogs", out var u)) uploadLogs = u.GetBoolean();
+            if (root.TryGetProperty("confirmClose", out var c)) confirmClose = c.GetBoolean();
+        }
+        catch (Exception ex)
+        {
+            LogLauncher($"ERREUR lecture paramètres : {ex.Message}");
+        }
+    }
+
+    private void SaveSettings()
+    {
+        try
+        {
+            Directory.CreateDirectory(RootDir);
+            var json = JsonSerializer.Serialize(new { autoUpdate, uploadLogs, confirmClose }, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(SettingsPath, json, Encoding.UTF8);
+            LogLauncher("Paramètres enregistrés.");
+        }
+        catch (Exception ex)
+        {
+            LogLauncher($"ERREUR sauvegarde paramètres : {ex.Message}");
+        }
+    }
+
+    private void ShowSettings()
+    {
+        using var form = new Form
+        {
+            Text = "Paramètres — Infinite Ascension",
+            ClientSize = new Size(430, 245),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            StartPosition = FormStartPosition.CenterParent,
+            BackColor = BackColor,
+            ForeColor = ForeColor
+        };
+
+        var auto = new CheckBox { Text = "Vérifier les mises à jour au démarrage", Checked = autoUpdate, AutoSize = true, Location = new Point(25, 25), ForeColor = ForeColor, BackColor = BackColor };
+        var upload = new CheckBox { Text = "Envoyer les logs de session automatiquement", Checked = uploadLogs, AutoSize = true, Location = new Point(25, 65), ForeColor = ForeColor, BackColor = BackColor };
+        var confirm = new CheckBox { Text = "Demander confirmation avant de fermer le jeu", Checked = confirmClose, AutoSize = true, Location = new Point(25, 105), ForeColor = ForeColor, BackColor = BackColor };
+        form.Controls.Add(auto);
+        form.Controls.Add(upload);
+        form.Controls.Add(confirm);
+
+        var save = new Button { Text = "ENREGISTRER", DialogResult = DialogResult.OK, Size = new Size(155, 42), Location = new Point(235, 165), BackColor = Color.FromArgb(110, 67, 191), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+        var cancel = new Button { Text = "ANNULER", DialogResult = DialogResult.Cancel, Size = new Size(120, 42), Location = new Point(100, 165), BackColor = Color.FromArgb(38, 47, 70), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+        form.Controls.Add(save);
+        form.Controls.Add(cancel);
+        form.AcceptButton = save;
+        form.CancelButton = cancel;
+
+        if (form.ShowDialog(this) == DialogResult.OK)
+        {
+            autoUpdate = auto.Checked;
+            uploadLogs = upload.Checked;
+            confirmClose = confirm.Checked;
+            SaveSettings();
+        }
+    }
+
     private void SetButtons(bool enabled)
     {
-        play.Enabled = enabled;
-        update.Enabled = enabled;
+        var running = gameProcess is { HasExited: false };
+        play.Enabled = enabled && !running;
+        update.Enabled = enabled && !running;
         logs.Enabled = enabled;
+        settings.Enabled = enabled;
+        stop.Enabled = enabled && running;
     }
 
     private void OpenLogs()

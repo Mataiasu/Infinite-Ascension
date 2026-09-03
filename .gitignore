@@ -1,0 +1,8 @@
+.godot/
+.export/
+build/
+server/__pycache__/
+*.log
+.vscode/
+.idea/
+.DS_Store

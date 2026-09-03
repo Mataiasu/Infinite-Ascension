@@ -1,13 +1,13 @@
 extends Node3D
 
 # Infinite Ascension — playable vertical slice
-# Third-person exploration, event-driven WASD movement, mouse camera,
+# Third-person exploration, robust ZQSD/WASD movement, mouse camera,
 # manual combat, enemies, XP/levels, Reborn progression, procedural scenery and local save.
 
 const XP_PER_LEVEL := 100.0
 const REBORN_LEVEL := 25
 const PLAYER_SPEED := 7.0
-const PLAYER_ACCEL := 24.0
+const PLAYER_ACCEL := 30.0
 const GRAVITY := 22.0
 const ATTACK_RANGE := 4.0
 const ENEMY_ATTACK_RANGE := 2.2
@@ -88,19 +88,23 @@ func _input(event: InputEvent) -> void:
         if key.echo:
             return
         var pressed := key.pressed
-        match key.physical_keycode:
-            KEY_W:
-                key_w = pressed
-            KEY_A:
-                key_a = pressed
-            KEY_S:
-                key_s = pressed
-            KEY_D:
-                key_d = pressed
-            KEY_ESCAPE:
-                if pressed:
-                    mouse_captured = not mouse_captured
-                    Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mouse_captured else Input.MOUSE_MODE_VISIBLE
+        var physical := key.physical_keycode
+        var logical := key.keycode
+
+        # Support both QWERTY (WASD) and AZERTY (ZQSD), using physical
+        # positions first and logical labels as a fallback.
+        if physical == KEY_W or logical == KEY_W or logical == KEY_Z:
+            key_w = pressed
+        elif physical == KEY_A or logical == KEY_A or logical == KEY_Q:
+            key_a = pressed
+        elif physical == KEY_S or logical == KEY_S:
+            key_s = pressed
+        elif physical == KEY_D or logical == KEY_D:
+            key_d = pressed
+        elif physical == KEY_ESCAPE or logical == KEY_ESCAPE:
+            if pressed:
+                mouse_captured = not mouse_captured
+                Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mouse_captured else Input.MOUSE_MODE_VISIBLE
 
     elif event is InputEventMouseMotion and mouse_captured:
         if camera_pivot != null and camera != null:
@@ -114,6 +118,8 @@ func _input(event: InputEvent) -> void:
 func _build_world() -> void:
     var ground := StaticBody3D.new()
     ground.name = "WorldGround"
+    ground.collision_layer = 1
+    ground.collision_mask = 1
     add_child(ground)
 
     var mesh_instance := MeshInstance3D.new()
@@ -137,7 +143,10 @@ func _build_world() -> void:
         var p := Vector3(randf_range(-WORLD_SIZE * 0.47, WORLD_SIZE * 0.47), 0, randf_range(-WORLD_SIZE * 0.47, WORLD_SIZE * 0.47))
         if p.length() < 8.0:
             continue
-        _create_tree(p, randf_range(0.8, 1.35)) if i % 3 != 0 else _create_rock(p)
+        if i % 3 != 0:
+            _create_tree(p, randf_range(0.8, 1.35))
+        else:
+            _create_rock(p)
 
     for i in range(14):
         var p := Vector3(randf_range(-45, 45), 0, randf_range(-45, 45))
@@ -164,10 +173,10 @@ func _create_tree(pos: Vector3, scale_value: float) -> void:
     root.add_child(trunk)
 
     var crown := MeshInstance3D.new()
-    var cone := SphereMesh.new()
-    cone.height = 3.8
-    cone.radius = 1.5
-    crown.mesh = cone
+    var sphere := SphereMesh.new()
+    sphere.height = 3.8
+    sphere.radius = 1.5
+    crown.mesh = sphere
     var leaf_mat := StandardMaterial3D.new()
     leaf_mat.albedo_color = Color("#2e6b4a")
     crown.material_override = leaf_mat
@@ -208,6 +217,7 @@ func _build_player() -> void:
     player.collision_layer = 1
     player.collision_mask = 1
     player.position = Vector3(0, 1.0, 0)
+    player.floor_snap_length = 0.2
     add_child(player)
 
     var collision := CollisionShape3D.new()
@@ -260,7 +270,17 @@ func _move_player(delta: float) -> void:
     if player == null or not is_instance_valid(player) or camera_pivot == null:
         return
 
-    var input := Vector2(float(int(key_d) - int(key_a)), float(int(key_w) - int(key_s)))
+    # Read the live keyboard state as a second path. This avoids losing a key
+    # release/press when another UI node consumes the original InputEvent.
+    var live_w := Input.is_physical_key_pressed(KEY_W) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_Z)
+    var live_a := Input.is_physical_key_pressed(KEY_A) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_Q)
+    var live_s := Input.is_physical_key_pressed(KEY_S) or Input.is_key_pressed(KEY_S)
+    var live_d := Input.is_physical_key_pressed(KEY_D) or Input.is_key_pressed(KEY_D)
+
+    var input := Vector2(
+        float(int(key_d or live_d) - int(key_a or live_a)),
+        float(int(key_w or live_w) - int(key_s or live_s))
+    )
     if input.length() > 1.0:
         input = input.normalized()
 
@@ -471,10 +491,14 @@ func _build_hud() -> void:
     box.add_theme_constant_override("separation", 4)
     top.add_child(box)
 
-    level_label = _label("NIVEAU 1 · REBORN 0", 20, Color("#f0f2ff")); box.add_child(level_label)
-    hp_label = _label("PV", 12, Color("#e98ba4")); box.add_child(hp_label)
-    xp_label = _label("XP", 12, Color("#bca5ff")); box.add_child(xp_label)
-    stats_label = _label("", 11, Color("#a5aec9")); box.add_child(stats_label)
+    level_label = _label("NIVEAU 1 · REBORN 0", 20, Color("#f0f2ff"))
+    box.add_child(level_label)
+    hp_label = _label("PV", 12, Color("#e98ba4"))
+    box.add_child(hp_label)
+    xp_label = _label("XP", 12, Color("#bca5ff"))
+    box.add_child(xp_label)
+    stats_label = _label("", 11, Color("#a5aec9"))
+    box.add_child(stats_label)
 
     var zone_panel := PanelContainer.new()
     zone_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -482,9 +506,12 @@ func _build_hud() -> void:
     zone_panel.size = Vector2(370, 94)
     zone_panel.add_theme_stylebox_override("panel", _panel(Color("#0b1020dd")))
     layer.add_child(zone_panel)
-    var zone_box := VBoxContainer.new(); zone_panel.add_child(zone_box)
-    zone_label = _label("", 18, Color("#f0f2ff")); zone_box.add_child(zone_label)
-    combat_label = _label("Explore pour rencontrer des ennemis.\nESPACE / clic gauche : attaquer", 11, Color("#55dfa0")); zone_box.add_child(combat_label)
+    var zone_box := VBoxContainer.new()
+    zone_panel.add_child(zone_box)
+    zone_label = _label("", 18, Color("#f0f2ff"))
+    zone_box.add_child(zone_label)
+    combat_label = _label("Explore pour rencontrer des ennemis.\nESPACE / clic gauche : attaquer", 11, Color("#55dfa0"))
+    zone_box.add_child(combat_label)
 
     crosshair = _label("+", 22, Color("#ffffffbb"))
     crosshair.set_anchors_preset(Control.PRESET_CENTER)
@@ -492,10 +519,10 @@ func _build_hud() -> void:
     crosshair.size = Vector2(20, 32)
     layer.add_child(crosshair)
 
-    hint_label = _label("WASD : se déplacer   •   Souris : caméra   •   Espace/clic : attaquer   •   Échap : libérer la souris", 11, Color("#c1c8df"))
+    hint_label = _label("ZQSD / WASD : se déplacer   •   Souris : caméra   •   Espace/clic : attaquer   •   Échap : libérer la souris", 11, Color("#c1c8df"))
     hint_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
     hint_label.position = Vector2(18, -48)
-    hint_label.size = Vector2(900, 30)
+    hint_label.size = Vector2(1100, 30)
     layer.add_child(hint_label)
 
     message_label = _label("", 13, Color("#e7ddff"))

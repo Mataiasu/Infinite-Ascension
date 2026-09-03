@@ -15,28 +15,46 @@ jobs:
       GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
       GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Java 17
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
       - name: Install Android SDK packages
+        shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.1" "cmdline-tools;latest"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.1"
       - name: Create debug keystore
+        shell: bash
         run: |
           mkdir -p "$HOME/.android"
           keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-      - uses: solarlabyrinth/action-setup-godot@v3
+      - name: Setup Godot 4.4.1
+        uses: solarlabyrinth/action-setup-godot@v3
         with:
           version: 4.4.1-stable
           export-templates: true
-      - name: Initialize isolated Dev Client project
+      - name: Validate Dev Client GDScript
         working-directory: dev/android-client
-        run: godot --headless --path . --editor --quit
-      - name: Configure Godot Android
+        shell: bash
+        run: |
+          set -o pipefail
+          mapfile -t scripts < <(find . -type f -name '*.gd' -not -path './.godot/*' | sort)
+          failed=0
+          for script in "${scripts[@]}"; do
+            echo "=== Checking ${script} ==="
+            if ! godot --headless --path . --check-only --script "${script}"; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Configure Godot Android editor settings
+        shell: bash
         run: |
           mkdir -p "$HOME/.config/godot"
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
@@ -50,6 +68,7 @@ jobs:
           EOF
       - name: Create isolated Android export preset
         working-directory: dev/android-client
+        shell: bash
         run: |
           cat > export_presets.cfg <<'EOF'
           [preset.0]
@@ -84,6 +103,7 @@ jobs:
           EOF
       - name: Export Android Dev Client
         working-directory: dev/android-client
+        shell: bash
         run: |
           mkdir -p ../../dist
           godot --headless --path . --export-debug "Android Dev Client" ../../dist/Infinite-Ascension-Android-Dev-unsigned.apk

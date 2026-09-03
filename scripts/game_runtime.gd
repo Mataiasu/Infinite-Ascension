@@ -90,18 +90,23 @@ func _input(event: InputEvent) -> void:
         var pressed := key.pressed
         var physical := key.physical_keycode
         var logical := key.keycode
+        var label := key.key_label
 
-        # Support both QWERTY (WASD) and AZERTY (ZQSD), using physical
-        # positions first and logical labels as a fallback.
-        if physical == KEY_W or logical == KEY_W or logical == KEY_Z:
+        # key_label is the actual key printed on the user's current keyboard
+        # layout. This is important on AZERTY keyboards.
+        if label == KEY_W or logical == KEY_W or physical == KEY_W:
             key_w = pressed
-        elif physical == KEY_A or logical == KEY_A or logical == KEY_Q:
+        elif label == KEY_A or logical == KEY_A or physical == KEY_A:
             key_a = pressed
-        elif physical == KEY_S or logical == KEY_S:
+        elif label == KEY_S or logical == KEY_S or physical == KEY_S:
             key_s = pressed
-        elif physical == KEY_D or logical == KEY_D:
+        elif label == KEY_D or logical == KEY_D or physical == KEY_D:
             key_d = pressed
-        elif physical == KEY_ESCAPE or logical == KEY_ESCAPE:
+        elif label == KEY_Z or logical == KEY_Z:
+            key_w = pressed
+        elif label == KEY_Q or logical == KEY_Q:
+            key_a = pressed
+        elif label == KEY_ESCAPE or logical == KEY_ESCAPE or physical == KEY_ESCAPE:
             if pressed:
                 mouse_captured = not mouse_captured
                 Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mouse_captured else Input.MOUSE_MODE_VISIBLE
@@ -270,12 +275,13 @@ func _move_player(delta: float) -> void:
     if player == null or not is_instance_valid(player) or camera_pivot == null:
         return
 
-    # Read the live keyboard state as a second path. This avoids losing a key
-    # release/press when another UI node consumes the original InputEvent.
-    var live_w := Input.is_physical_key_pressed(KEY_W) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_Z)
-    var live_a := Input.is_physical_key_pressed(KEY_A) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_Q)
-    var live_s := Input.is_physical_key_pressed(KEY_S) or Input.is_key_pressed(KEY_S)
-    var live_d := Input.is_physical_key_pressed(KEY_D) or Input.is_key_pressed(KEY_D)
+    # Use Godot's current keyboard-label state. Unlike a text input path,
+    # this is independent from GUI event consumption and follows the key
+    # labels of the active keyboard layout.
+    var live_w := Input.is_key_label_pressed(KEY_W) or Input.is_key_label_pressed(KEY_Z)
+    var live_a := Input.is_key_label_pressed(KEY_A) or Input.is_key_label_pressed(KEY_Q)
+    var live_s := Input.is_key_label_pressed(KEY_S)
+    var live_d := Input.is_key_label_pressed(KEY_D)
 
     var input := Vector2(
         float(int(key_d or live_d) - int(key_a or live_a)),

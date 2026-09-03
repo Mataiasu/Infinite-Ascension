@@ -15,7 +15,7 @@ var last_target: Node3D
 
 func _ready() -> void:
     process_priority = 100
-    GameLogger.log_event("ACTIVE_ATTACK_READY", {"range": ATTACK_RANGE, "cooldown": ATTACK_COOLDOWN})
+    _log("ACTIVE_ATTACK_READY", {"range": ATTACK_RANGE, "cooldown": ATTACK_COOLDOWN})
 
 func _process(delta: float) -> void:
     cooldown = max(0.0, cooldown - delta)
@@ -64,13 +64,13 @@ func _attack() -> void:
     if player == null or not is_instance_valid(player):
         player = _find_player()
     if player == null:
-        GameLogger.log_event("ACTIVE_ATTACK_MISS", {"reason": "player_not_found"})
+        _log("ACTIVE_ATTACK_MISS", {"reason": "player_not_found"})
         return
 
     cooldown = ATTACK_COOLDOWN
     var target: Node3D = _nearest_enemy()
     if target == null:
-        GameLogger.log_event("ACTIVE_ATTACK_MISS", {"reason": "no_target"})
+        _log("ACTIVE_ATTACK_MISS", {"reason": "no_target"})
         return
 
     var runtime: Node = get_tree().current_scene
@@ -104,7 +104,7 @@ func _attack() -> void:
         if combat_label != null:
             combat_label.text = "⚔ ATTAQUE %s%s · -%d PV" % [str(target.get_meta("name")), " · CRITIQUE" if critical else "", damage]
 
-    GameLogger.log_event("ACTIVE_ATTACK", {
+    _log("ACTIVE_ATTACK", {
         "target": str(target.get_meta("name")),
         "damage": damage,
         "critical": critical,
@@ -113,3 +113,8 @@ func _attack() -> void:
 
     if hp <= 0.0 and runtime != null and runtime.has_method("_defeat_enemy"):
         runtime.call("_defeat_enemy", target)
+
+func _log(event_name: String, data: Dictionary = {}) -> void:
+    var logger := get_node_or_null("/root/GameLogger")
+    if logger != null and logger.has_method("log_event"):
+        logger.call("log_event", event_name, data)

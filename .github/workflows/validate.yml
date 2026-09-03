@@ -5,16 +5,62 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  validate-godot:
+    name: Validate Godot project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Godot 4.4.1
+        uses: solarlabyrinth/action-setup-godot@v3
+        with:
+          version: 4.4.1-stable
+          export-templates: true
+      - name: Parse every GDScript
+        shell: bash
+        run: |
+          set -o pipefail
+          mapfile -t scripts < <(find . -type f -name '*.gd' -not -path './.git/*' -not -path './.godot/*' | sort)
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "No GDScript files found."
+            exit 1
+          fi
+          failed=0
+          for script in "${scripts[@]}"; do
+            echo "=== Checking ${script} ==="
+            if ! godot --headless --path . --check-only --script "${script}"; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Validate root project initialization
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path . --editor --quit 2>&1 | tee godot-validation.log
+          if grep -Eq 'SCRIPT ERROR:|Failed to load script|Failed to create an autoload' godot-validation.log; then
+            echo 'Godot script errors detected during project initialization.'
+            exit 1
+          fi
+
   validate-server:
+    name: Validate Python server
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt
-      - run: python -m compileall server.py
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile server
+        run: python -m compileall -q server.py

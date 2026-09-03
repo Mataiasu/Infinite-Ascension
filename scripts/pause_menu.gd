@@ -146,5 +146,10 @@ func _set_volume(value: float) -> void:
 
 func _quit_game() -> void:
     get_tree().paused = false
-    GameLogger.log_event("GAME_QUIT_FROM_MENU", {})
+    _log("GAME_QUIT_FROM_MENU", {})
     get_tree().quit()
+
+func _log(event_name: String, data: Dictionary = {}) -> void:
+    var logger := get_node_or_null("/root/GameLogger")
+    if logger != null and logger.has_method("log_event"):
+        logger.call("log_event", event_name, data)

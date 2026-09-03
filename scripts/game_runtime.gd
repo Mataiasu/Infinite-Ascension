@@ -1,15 +1,14 @@
 extends Node3D
 
 # Infinite Ascension — playable vertical slice
-# Third-person exploration, WASD movement, mouse camera, enemies, auto-combat,
-# XP/levels, Reborn progression, procedural scenery and local save.
+# Third-person exploration, direct physical-key movement, mouse camera,
+# manual combat, enemies, XP/levels, Reborn progression, procedural scenery and local save.
 
 const XP_PER_LEVEL := 100.0
 const REBORN_LEVEL := 25
 const PLAYER_SPEED := 7.0
 const PLAYER_ACCEL := 24.0
 const GRAVITY := 22.0
-const ATTACK_INTERVAL := 1.0
 const ATTACK_RANGE := 4.0
 const ENEMY_ATTACK_RANGE := 2.2
 const MAX_ENEMIES := 12
@@ -32,7 +31,6 @@ var player: CharacterBody3D
 var camera_pivot: Node3D
 var camera: Camera3D
 var enemies: Array[Node3D] = []
-var attack_timer := 0.0
 var enemy_attack_timer := 0.0
 var spawn_timer := 0.0
 var autosave_timer := 0.0
@@ -69,20 +67,21 @@ func _ready() -> void:
     _message("Infinite Ascension — exploration libre")
 
 func _process(delta: float) -> void:
-    _move_player(delta)
     _move_enemies(delta)
-    _auto_combat(delta)
     _enemy_attacks(delta)
     _spawn_loop(delta)
     _autosave(delta)
     _update_camera()
     _refresh_hud()
 
+func _physics_process(delta: float) -> void:
+    _move_player(delta)
+
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventMouseMotion and mouse_captured:
         camera_pivot.rotate_y(-event.relative.x * 0.004)
         camera.rotation.x = clamp(camera.rotation.x - event.relative.y * 0.003, deg_to_rad(-65), deg_to_rad(20))
-    elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+    elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
         mouse_captured = not mouse_captured
         Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mouse_captured else Input.MOUSE_MODE_VISIBLE
     elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and not mouse_captured:
@@ -111,7 +110,6 @@ func _build_world() -> void:
     shape.position.y = -0.1
     ground.add_child(shape)
 
-    # A simple procedural world: trees, rocks and glowing crystals.
     for i in range(95):
         var p := Vector3(randf_range(-WORLD_SIZE * 0.47, WORLD_SIZE * 0.47), 0, randf_range(-WORLD_SIZE * 0.47, WORLD_SIZE * 0.47))
         if p.length() < 8.0:
@@ -232,24 +230,38 @@ func _update_camera() -> void:
     camera.position = camera.position.lerp(Vector3(0, 4.0, 8.5), 0.12)
 
 func _move_player(delta: float) -> void:
-    if player == null:
+    if player == null or not is_instance_valid(player) or camera_pivot == null:
         return
-    var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+
+    var input := Vector2(
+        float(int(Input.is_physical_key_pressed(KEY_D)) - int(Input.is_physical_key_pressed(KEY_A))),
+        float(int(Input.is_physical_key_pressed(KEY_W)) - int(Input.is_physical_key_pressed(KEY_S)))
+    )
+    if input.length() > 1.0:
+        input = input.normalized()
+
     var forward := -camera_pivot.global_transform.basis.z
     var right := camera_pivot.global_transform.basis.x
-    var direction := (right * input.x + forward * input.y)
-    direction.y = 0
-    if direction.length() > 1.0:
+    forward.y = 0.0
+    right.y = 0.0
+    if forward.length_squared() > 0.001:
+        forward = forward.normalized()
+    if right.length_squared() > 0.001:
+        right = right.normalized()
+
+    var direction := right * input.x + forward * input.y
+    if direction.length_squared() > 1.0:
         direction = direction.normalized()
 
     var target_velocity := direction * PLAYER_SPEED
     player.velocity.x = move_toward(player.velocity.x, target_velocity.x, PLAYER_ACCEL * delta)
     player.velocity.z = move_toward(player.velocity.z, target_velocity.z, PLAYER_ACCEL * delta)
-    if not player.is_on_floor():
-        player.velocity.y -= GRAVITY * delta
-    else:
+    if player.is_on_floor():
         player.velocity.y = -0.2
+    else:
+        player.velocity.y -= GRAVITY * delta
     player.move_and_slide()
+
     player.position.x = clamp(player.position.x, -WORLD_SIZE * 0.48, WORLD_SIZE * 0.48)
     player.position.z = clamp(player.position.z, -WORLD_SIZE * 0.48, WORLD_SIZE * 0.48)
 
@@ -306,9 +318,10 @@ func _move_enemies(delta: float) -> void:
             continue
         var distance := enemy.global_position.distance_to(player.global_position)
         if distance > ENEMY_ATTACK_RANGE:
-            var direction := (player.global_position - enemy.global_position)
+            var direction := player.global_position - enemy.global_position
             direction.y = 0
-            direction = direction.normalized()
+            if direction.length_squared() > 0.001:
+                direction = direction.normalized()
             enemy.velocity = direction * min(2.4 + float(enemy.get_meta("level")) * 0.08, 4.0)
             enemy.move_and_slide()
             enemy.rotation.y = lerp_angle(enemy.rotation.y, atan2(direction.x, direction.z), 0.1)
@@ -326,23 +339,6 @@ func _nearest_enemy(max_distance := ATTACK_RANGE) -> Node3D:
             best = distance
             nearest = enemy
     return nearest
-
-func _auto_combat(delta: float) -> void:
-    attack_timer += delta
-    if attack_timer < ATTACK_INTERVAL:
-        return
-    attack_timer = 0.0
-    var target := _nearest_enemy()
-    if target == null:
-        combat_label.text = "Aucune cible proche — explore pour trouver des ennemis."
-        return
-    var damage: int = max(1, int(power * 0.55 + level * 2.0 + reborn * 5.0))
-    target.set_meta("hp", float(target.get_meta("hp")) - damage)
-    total_damage += damage
-    combat_label.text = "⚔ %s Niv.%d · -%d PV" % [target.get_meta("name"), int(target.get_meta("level")), damage]
-    _message("Attaque automatique : %s" % target.get_meta("name"))
-    if float(target.get_meta("hp")) <= 0:
-        _defeat_enemy(target)
 
 func _enemy_attacks(delta: float) -> void:
     enemy_attack_timer += delta
@@ -379,10 +375,18 @@ func _defeat_enemy(enemy: Node3D) -> void:
             _update_frontier()
 
 func _player_defeated() -> void:
+    level = 0
+    xp = 0.0
+    power = 25.0
+    max_hp = 100.0
     hp = max_hp
-    gold = max(0, gold - 10)
-    player.position = Vector3.ZERO
-    _message("Défaite · retour au point de départ · -10 or")
+    player.velocity = Vector3.ZERO
+    player.position = Vector3(0, 1.0, 0)
+    _update_frontier()
+    _apply_zone_visuals()
+    _message("Défaite · retour niveau 0 · progression de test réinitialisée")
+    _save()
+    _refresh_hud()
 
 func _spawn_loop(delta: float) -> void:
     spawn_timer += delta
@@ -450,7 +454,7 @@ func _build_hud() -> void:
     layer.add_child(zone_panel)
     var zone_box := VBoxContainer.new(); zone_panel.add_child(zone_box)
     zone_label = _label("", 18, Color("#f0f2ff")); zone_box.add_child(zone_label)
-    combat_label = _label("Explore pour rencontrer des ennemis.", 11, Color("#55dfa0")); zone_box.add_child(combat_label)
+    combat_label = _label("Explore pour rencontrer des ennemis.\nESPACE / clic gauche : attaquer", 11, Color("#55dfa0")); zone_box.add_child(combat_label)
 
     crosshair = _label("+", 22, Color("#ffffffbb"))
     crosshair.set_anchors_preset(Control.PRESET_CENTER)
@@ -458,10 +462,10 @@ func _build_hud() -> void:
     crosshair.size = Vector2(20, 32)
     layer.add_child(crosshair)
 
-    hint_label = _label("WASD : se déplacer   •   Souris : caméra   •   Échap : libérer la souris", 11, Color("#c1c8df"))
+    hint_label = _label("WASD : se déplacer   •   Souris : caméra   •   Espace/clic : attaquer   •   Échap : libérer la souris", 11, Color("#c1c8df"))
     hint_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
     hint_label.position = Vector2(18, -48)
-    hint_label.size = Vector2(650, 30)
+    hint_label.size = Vector2(900, 30)
     layer.add_child(hint_label)
 
     message_label = _label("", 13, Color("#e7ddff"))

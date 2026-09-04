@@ -5,9 +5,9 @@ const PANEL_COLOR := Color("#0d1428f5")
 const BORDER_COLOR := Color("#6f4cff")
 const TEXT_COLOR := Color("#f2efff")
 const MUTED_COLOR := Color("#9ea8c7")
+const CURSOR_PATH := "res://assets/ui/menu_cursor.svg"
 
 var menu_root: Control
-var menu_cursor: Control
 var continue_button: Button
 var new_game_button: Button
 var quit_button: Button
@@ -17,8 +17,17 @@ func _ready() -> void:
     layer = 100
     _build_menu()
     get_tree().paused = true
-    Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+    _show_menu_cursor()
     call_deferred("_lock_runtime_while_menu_is_open")
+
+func _show_menu_cursor() -> void:
+    Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+    var cursor_texture := load(CURSOR_PATH)
+    if cursor_texture is Texture2D:
+        Input.set_custom_mouse_cursor(cursor_texture, Input.CURSOR_ARROW, Vector2(3, 3))
+
+func _hide_menu_cursor() -> void:
+    Input.set_custom_mouse_cursor(null, Input.CURSOR_ARROW)
 
 func _lock_runtime_while_menu_is_open() -> void:
     var runtime := get_parent()
@@ -119,12 +128,6 @@ func _build_menu() -> void:
     version.add_theme_color_override("font_color", Color("#68718c"))
     box.add_child(version)
 
-    var cursor_script := load("res://scripts/menu_cursor.gd")
-    if cursor_script != null:
-        menu_cursor = Control.new()
-        menu_cursor.set_script(cursor_script)
-        add_child(menu_cursor)
-
 func _button(text_value: String) -> Button:
     var button := Button.new()
     button.text = text_value
@@ -165,16 +168,17 @@ func _new_game() -> void:
     if FileAccess.file_exists(save_path):
         DirAccess.remove_absolute(save_path)
     get_tree().paused = false
+    _hide_menu_cursor()
     get_tree().reload_current_scene()
 
 func _quit_game() -> void:
     _unlock_runtime()
     get_tree().paused = false
+    _hide_menu_cursor()
     get_tree().quit()
 
 func _close_menu() -> void:
     get_tree().paused = false
+    _hide_menu_cursor()
     Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-    if menu_cursor != null:
-        menu_cursor.queue_free()
     menu_root.queue_free()

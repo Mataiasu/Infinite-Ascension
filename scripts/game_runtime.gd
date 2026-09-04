@@ -54,7 +54,7 @@ var crosshair: Label
 
 func _ready() -> void:
     randomize()
-    process_mode = Node.PROCESS_MODE_ALWAYS
+    process_mode = Node.PROCESS_MODE_PAUSABLE
     Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
     _build_world()
     _build_player()
@@ -95,137 +95,120 @@ func _input(event: InputEvent) -> void:
         Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _build_world() -> void:
+    var environment := WorldEnvironment.new()
+    var env := Environment.new()
+    env.background_mode = Environment.BG_COLOR
+    env.background_color = Color("#07101a")
+    env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+    env.ambient_light_color = Color("#6677aa")
+    env.ambient_light_energy = 0.65
+    env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+    environment.environment = env
+    add_child(environment)
+
+    var sun := DirectionalLight3D.new()
+    sun.rotation_degrees = Vector3(-55, -30, 0)
+    sun.light_energy = 1.0
+    sun.shadow_enabled = true
+    add_child(sun)
+
     var ground := StaticBody3D.new()
-    ground.name = "WorldGround"
-    ground.collision_layer = 1
-    ground.collision_mask = 1
+    ground.name = "Ground"
     add_child(ground)
 
     var mesh_instance := MeshInstance3D.new()
-    var plane := PlaneMesh.new()
-    plane.size = Vector2(WORLD_SIZE, WORLD_SIZE)
-    mesh_instance.mesh = plane
-    var mat := StandardMaterial3D.new()
-    mat.albedo_color = zone_colors[0]
-    mat.roughness = 1.0
-    mesh_instance.material_override = mat
+    var mesh := PlaneMesh.new()
+    mesh.size = Vector2(WORLD_SIZE, WORLD_SIZE)
+    mesh_instance.mesh = mesh
+    var material := StandardMaterial3D.new()
+    material.albedo_color = Color("#18231e")
+    material.roughness = 0.95
+    mesh_instance.material_override = material
     ground.add_child(mesh_instance)
 
-    var shape := CollisionShape3D.new()
-    var box := BoxShape3D.new()
-    box.size = Vector3(WORLD_SIZE, 0.2, WORLD_SIZE)
-    shape.shape = box
-    shape.position.y = -0.1
-    ground.add_child(shape)
+    var collision := CollisionShape3D.new()
+    var shape := BoxShape3D.new()
+    shape.size = Vector3(WORLD_SIZE, 0.2, WORLD_SIZE)
+    collision.shape = shape
+    collision.position.y = -0.1
+    ground.add_child(collision)
 
-    for i in range(95):
-        var p := Vector3(randf_range(-WORLD_SIZE * 0.47, WORLD_SIZE * 0.47), 0, randf_range(-WORLD_SIZE * 0.47, WORLD_SIZE * 0.47))
-        if p.length() < 8.0:
-            continue
-        if i % 3 != 0:
-            _create_tree(p, randf_range(0.8, 1.35))
-        else:
-            _create_rock(p)
+    for i in range(70):
+        _spawn_scenery(i)
 
-    for i in range(14):
-        var p := Vector3(randf_range(-45, 45), 0, randf_range(-45, 45))
-        if p.length() < 10:
-            continue
-        _create_crystal(p)
-
-func _create_tree(pos: Vector3, scale_value: float) -> void:
+func _spawn_scenery(index: int) -> void:
     var root := Node3D.new()
-    root.position = pos
-    root.scale = Vector3.ONE * scale_value
+    root.name = "Scenery_%d" % index
+    var angle := randf() * TAU
+    var distance := randf_range(5.0, WORLD_SIZE * 0.44)
+    root.position = Vector3(cos(angle) * distance, 0.0, sin(angle) * distance)
     add_child(root)
 
-    var trunk := MeshInstance3D.new()
-    var cylinder := CylinderMesh.new()
-    cylinder.height = 2.8
-    cylinder.top_radius = 0.22
-    cylinder.bottom_radius = 0.35
-    trunk.mesh = cylinder
-    var trunk_mat := StandardMaterial3D.new()
-    trunk_mat.albedo_color = Color("#35261d")
-    trunk.material_override = trunk_mat
-    trunk.position.y = 1.4
-    root.add_child(trunk)
+    if index % 3 == 0:
+        var trunk := MeshInstance3D.new()
+        var cylinder := CylinderMesh.new()
+        cylinder.top_radius = 0.22
+        cylinder.bottom_radius = 0.32
+        cylinder.height = randf_range(2.0, 3.8)
+        trunk.mesh = cylinder
+        var bark := StandardMaterial3D.new()
+        bark.albedo_color = Color("#3a2a20")
+        bark.roughness = 1.0
+        trunk.material_override = bark
+        trunk.position.y = cylinder.height * 0.5
+        root.add_child(trunk)
 
-    var crown := MeshInstance3D.new()
-    var sphere := SphereMesh.new()
-    sphere.height = 3.8
-    sphere.radius = 1.5
-    crown.mesh = sphere
-    var leaf_mat := StandardMaterial3D.new()
-    leaf_mat.albedo_color = Color("#2e6b4a")
-    crown.material_override = leaf_mat
-    crown.position.y = 3.4
-    root.add_child(crown)
-
-func _create_rock(pos: Vector3) -> void:
-    var rock := MeshInstance3D.new()
-    var sphere := SphereMesh.new()
-    sphere.height = randf_range(0.7, 1.8)
-    sphere.radius = randf_range(0.5, 1.2)
-    rock.mesh = sphere
-    rock.position = pos + Vector3(0, sphere.height * 0.5, 0)
-    rock.scale.x = randf_range(0.7, 1.5)
-    var mat := StandardMaterial3D.new()
-    mat.albedo_color = Color("#42485b")
-    mat.roughness = 0.9
-    rock.material_override = mat
-    add_child(rock)
-
-func _create_crystal(pos: Vector3) -> void:
-    var crystal := MeshInstance3D.new()
-    var prism := PrismMesh.new()
-    prism.size = Vector3(0.5, 1.8, 0.5)
-    crystal.mesh = prism
-    crystal.position = pos + Vector3(0, 0.9, 0)
-    var mat := StandardMaterial3D.new()
-    mat.albedo_color = Color("#8f63ff")
-    mat.emission_enabled = true
-    mat.emission = Color("#6c37b8")
-    mat.emission_energy_multiplier = 2.0
-    crystal.material_override = mat
-    add_child(crystal)
+        var crown := MeshInstance3D.new()
+        var sphere := SphereMesh.new()
+        sphere.radius = randf_range(1.0, 1.5)
+        sphere.height = sphere.radius * 2.0
+        crown.mesh = sphere
+        var leaves := StandardMaterial3D.new()
+        leaves.albedo_color = Color("#214b35")
+        leaves.roughness = 0.9
+        crown.material_override = leaves
+        crown.position.y = cylinder.height + sphere.radius * 0.55
+        root.add_child(crown)
+    else:
+        var rock := MeshInstance3D.new()
+        var box := BoxMesh.new()
+        var scale := randf_range(0.4, 1.2)
+        box.size = Vector3(scale, scale * randf_range(0.5, 1.1), scale * randf_range(0.7, 1.3))
+        rock.mesh = box
+        var stone := StandardMaterial3D.new()
+        stone.albedo_color = Color("#36404b")
+        stone.roughness = 1.0
+        rock.material_override = stone
+        rock.position.y = box.size.y * 0.5
+        rock.rotation.y = randf() * TAU
+        root.add_child(rock)
 
 func _build_player() -> void:
     player = CharacterBody3D.new()
     player.name = "Player"
-    player.collision_layer = 1
-    player.collision_mask = 1
     player.position = Vector3(0, 1.0, 0)
-    player.floor_snap_length = 0.2
     add_child(player)
 
-    var collision := CollisionShape3D.new()
-    var capsule_shape := CapsuleShape3D.new()
-    capsule_shape.height = 1.8
-    capsule_shape.radius = 0.42
-    collision.shape = capsule_shape
-    player.add_child(collision)
+    var capsule := CollisionShape3D.new()
+    var shape := CapsuleShape3D.new()
+    shape.radius = 0.45
+    shape.height = 1.8
+    capsule.shape = shape
+    capsule.position.y = 0.9
+    player.add_child(capsule)
 
-    var mesh := MeshInstance3D.new()
-    var capsule := CapsuleMesh.new()
-    capsule.height = 1.8
-    capsule.radius = 0.42
-    mesh.mesh = capsule
-    var mat := StandardMaterial3D.new()
-    mat.albedo_color = Color("#a66cff")
-    mat.emission_enabled = true
-    mat.emission = Color("#542b91")
-    mat.emission_energy_multiplier = 1.2
-    mesh.material_override = mat
-    mesh.position.y = 0.9
-    player.add_child(mesh)
-
-    var light := OmniLight3D.new()
-    light.light_color = Color("#a66cff")
-    light.light_energy = 0.8
-    light.omni_range = 6.0
-    light.position.y = 1.2
-    player.add_child(light)
+    var body := MeshInstance3D.new()
+    var mesh := CapsuleMesh.new()
+    mesh.radius = 0.45
+    mesh.height = 1.8
+    body.mesh = mesh
+    var material := StandardMaterial3D.new()
+    material.albedo_color = Color("#9b7cff")
+    material.metallic = 0.15
+    material.roughness = 0.55
+    body.material_override = material
+    body.position.y = 0.9
+    player.add_child(body)
 
 func _build_camera() -> void:
     camera_pivot = Node3D.new()
@@ -240,11 +223,83 @@ func _build_camera() -> void:
     camera.fov = 72.0
     camera_pivot.add_child(camera)
 
-func _update_camera() -> void:
-    if camera == null or player == null:
+func _build_hud() -> void:
+    var layer := CanvasLayer.new()
+    layer.name = "HUD"
+    layer.layer = 10
+    add_child(layer)
+
+    var root := Control.new()
+    root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    layer.add_child(root)
+
+    level_label = Label.new()
+    level_label.position = Vector2(24, 18)
+    level_label.add_theme_font_size_override("font_size", 20)
+    root.add_child(level_label)
+
+    hp_label = Label.new()
+    hp_label.position = Vector2(24, 48)
+    root.add_child(hp_label)
+
+    xp_label = Label.new()
+    xp_label.position = Vector2(24, 72)
+    root.add_child(xp_label)
+
+    stats_label = Label.new()
+    stats_label.position = Vector2(24, 105)
+    root.add_child(stats_label)
+
+    zone_label = Label.new()
+    zone_label.position = Vector2(24, 145)
+    zone_label.add_theme_font_size_override("font_size", 16)
+    root.add_child(zone_label)
+
+    combat_label = Label.new()
+    combat_label.position = Vector2(24, 175)
+    root.add_child(combat_label)
+
+    hint_label = Label.new()
+    hint_label.position = Vector2(24, 205)
+    hint_label.text = "ZQSD / WASD : déplacer  •  Souris : caméra  •  Espace / clic : attaque  •  Échap : pause"
+    root.add_child(hint_label)
+
+    message_label = Label.new()
+    message_label.position = Vector2(0, 650)
+    message_label.size = Vector2(1152, 40)
+    message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    message_label.add_theme_font_size_override("font_size", 18)
+    root.add_child(message_label)
+
+    crosshair = Label.new()
+    crosshair.text = "+"
+    crosshair.position = Vector2(571, 335)
+    crosshair.add_theme_font_size_override("font_size", 24)
+    root.add_child(crosshair)
+
+    reborn_button = Button.new()
+    reborn_button.text = "REBORN"
+    reborn_button.position = Vector2(1000, 20)
+    reborn_button.size = Vector2(130, 48)
+    reborn_button.pressed.connect(_do_reborn)
+    root.add_child(reborn_button)
+
+func _refresh_hud() -> void:
+    if level_label == null:
         return
-    camera_pivot.global_position = camera_pivot.global_position.lerp(player.global_position + Vector3(0, 1.5, 0), 0.2)
-    camera.position = camera.position.lerp(Vector3(0, 4.0, 8.5), 0.12)
+    level_label.text = "Niveau %d  •  Reborn %d" % [level, reborn]
+    hp_label.text = "HP %d / %d" % [round(hp), round(max_hp)]
+    xp_label.text = "XP %d / %d" % [round(xp), round(XP_PER_LEVEL)]
+    stats_label.text = "Puissance %d  •  Or %d  •  Kills %d" % [round(power), gold, kills]
+    zone_label.text = "%s  •  %s  •  Frontière %d–%d" % [zone_names[zone_index], zone_biomes[zone_index], frontier_min, frontier_max]
+    combat_label.text = "Dégâts totaux : %d" % total_damage
+    reborn_button.visible = level >= REBORN_LEVEL
+
+func _message(text_value: String) -> void:
+    last_message = text_value
+    if message_label != null:
+        message_label.text = text_value
 
 func _move_player(delta: float) -> void:
     if player == null or not is_instance_valid(player) or camera_pivot == null:
@@ -277,277 +332,204 @@ func _move_player(delta: float) -> void:
     player.position.x = clamp(player.position.x, -WORLD_SIZE * 0.48, WORLD_SIZE * 0.48)
     player.position.z = clamp(player.position.z, -WORLD_SIZE * 0.48, WORLD_SIZE * 0.48)
 
+func _move_enemies(delta: float) -> void:
+    if player == null:
+        return
+    for enemy in enemies:
+        if enemy == null or not is_instance_valid(enemy):
+            continue
+        var to_player := player.global_position - enemy.global_position
+        to_player.y = 0.0
+        var distance := to_player.length()
+        if distance > ENEMY_ATTACK_RANGE and distance > 0.01:
+            enemy.global_position += to_player.normalized() * min(2.4 + level * 0.08, 4.0) * delta
+            enemy.look_at(Vector3(player.global_position.x, enemy.global_position.y, player.global_position.z), Vector3.UP)
+
+func _enemy_attacks(delta: float) -> void:
+    enemy_attack_timer -= delta
+    if enemy_attack_timer > 0.0 or player == null:
+        return
+    enemy_attack_timer = 1.3
+    var total := 0
+    for enemy in enemies:
+        if enemy == null or not is_instance_valid(enemy):
+            continue
+        if enemy.global_position.distance_to(player.global_position) <= ENEMY_ATTACK_RANGE:
+            total += int(enemy.get_meta("damage", 5))
+    if total > 0:
+        hp -= total
+        _message("Tu subis %d dégâts." % total)
+        if hp <= 0.0:
+            hp = 0.0
+            _handle_defeat()
+
+func _spawn_loop(delta: float) -> void:
+    spawn_timer -= delta
+    if spawn_timer <= 0.0 and enemies.size() < MAX_ENEMIES:
+        spawn_timer = 4.0
+        _spawn_enemy()
+
 func _spawn_initial_enemies() -> void:
-    for i in range(8):
+    for i in range(6):
         _spawn_enemy()
 
 func _spawn_enemy() -> void:
-    if enemies.size() >= MAX_ENEMIES:
+    if player == null or enemies.size() >= MAX_ENEMIES:
         return
-
     var enemy := CharacterBody3D.new()
-    enemy.name = "Enemy"
-    enemy.collision_layer = 2
-    enemy.collision_mask = 2
-
+    enemy.name = "Enemy_%d" % enemies.size()
     var angle := randf() * TAU
-    var distance := randf_range(10.0, 32.0)
-    enemy.position = player.position + Vector3(cos(angle) * distance, 0.9, sin(angle) * distance)
-    enemy.position.x = clamp(enemy.position.x, -45.0, 45.0)
-    enemy.position.z = clamp(enemy.position.z, -45.0, 45.0)
+    var distance := randf_range(14.0, 34.0)
+    enemy.position = player.position + Vector3(cos(angle) * distance, 1.0, sin(angle) * distance)
+    enemy.position.x = clamp(enemy.position.x, -WORLD_SIZE * 0.45, WORLD_SIZE * 0.45)
+    enemy.position.z = clamp(enemy.position.z, -WORLD_SIZE * 0.45, WORLD_SIZE * 0.45)
     add_child(enemy)
+
+    var level_value := randi_range(frontier_min, frontier_max)
+    var enemy_hp := level_value * 30 + 30
+    var enemy_damage := level_value * 2 + 3
+    enemy.set_meta("level", level_value)
+    enemy.set_meta("hp", enemy_hp)
+    enemy.set_meta("max_hp", enemy_hp)
+    enemy.set_meta("damage", enemy_damage)
 
     var collision := CollisionShape3D.new()
     var shape := CapsuleShape3D.new()
-    shape.height = 1.6
-    shape.radius = 0.45
+    shape.radius = 0.5
+    shape.height = 1.8
     collision.shape = shape
+    collision.position.y = 0.9
     enemy.add_child(collision)
 
-    var visual := MeshInstance3D.new()
+    var body := MeshInstance3D.new()
     var mesh := CapsuleMesh.new()
-    mesh.height = 1.6
-    mesh.radius = 0.45
-    visual.mesh = mesh
-    var mat := StandardMaterial3D.new()
-    mat.albedo_color = Color("#d85a79") if randi_range(0, 1) == 0 else Color("#657ee8")
-    mat.emission_enabled = true
-    mat.emission = mat.albedo_color * 0.15
-    visual.material_override = mat
-    visual.position.y = 0.8
-    enemy.add_child(visual)
+    mesh.radius = 0.5
+    mesh.height = 1.8
+    body.mesh = mesh
+    var material := StandardMaterial3D.new()
+    material.albedo_color = Color("#b64cff") if randi() % 2 == 0 else Color("#ff4c7a")
+    material.emission_enabled = true
+    material.emission = material.albedo_color * 0.15
+    body.material_override = material
+    body.position.y = 0.9
+    body.scale = Vector3.ONE * (1.0 + level_value * 0.02)
+    enemy.add_child(body)
 
-    enemy.set_meta("level", randi_range(frontier_min, frontier_max))
-    enemy.set_meta("hp", float(int(enemy.get_meta("level")) * 30 + 30))
-    enemy.set_meta("max_hp", enemy.get_meta("hp"))
-    enemy.set_meta("damage", float(int(enemy.get_meta("level")) * 2 + 3))
-    enemy.set_meta("name", ["Brumeux", "Ravager", "Cendreux"][randi_range(0, 2)])
+    var label := Label3D.new()
+    label.text = "Niv. %d" % level_value
+    label.position.y = 2.2
+    label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+    label.font_size = 32
+    enemy.add_child(label)
+
     enemies.append(enemy)
 
-func _move_enemies(delta: float) -> void:
+func _attack() -> void:
+    var closest: Node3D = null
+    var closest_distance := ATTACK_RANGE
     for enemy in enemies:
-        if not is_instance_valid(enemy):
+        if enemy == null or not is_instance_valid(enemy):
             continue
         var distance := enemy.global_position.distance_to(player.global_position)
-        if distance > ENEMY_ATTACK_RANGE:
-            var direction := player.global_position - enemy.global_position
-            direction.y = 0
-            if direction.length_squared() > 0.001:
-                direction = direction.normalized()
-            enemy.velocity = direction * min(2.4 + float(enemy.get_meta("level")) * 0.08, 4.0)
-            enemy.move_and_slide()
-            enemy.rotation.y = lerp_angle(enemy.rotation.y, atan2(direction.x, direction.z), 0.1)
-        else:
-            enemy.velocity = Vector3.ZERO
-
-func _nearest_enemy(max_distance := ATTACK_RANGE) -> Node3D:
-    var nearest: Node3D = null
-    var best := max_distance
-    for enemy in enemies:
-        if not is_instance_valid(enemy):
-            continue
-        var distance := player.global_position.distance_to(enemy.global_position)
-        if distance < best:
-            best = distance
-            nearest = enemy
-    return nearest
-
-func _enemy_attacks(delta: float) -> void:
-    enemy_attack_timer += delta
-    if enemy_attack_timer < 1.3:
+        if distance <= closest_distance:
+            closest = enemy
+            closest_distance = distance
+    if closest == null:
+        _message("Aucune cible à portée.")
         return
-    enemy_attack_timer = 0.0
-    for enemy in enemies:
-        if not is_instance_valid(enemy):
-            continue
-        if enemy.global_position.distance_to(player.global_position) <= ENEMY_ATTACK_RANGE:
-            hp -= float(enemy.get_meta("damage"))
-    if hp <= 0:
-        _player_defeated()
+    var critical := randf() < 0.15
+    var damage := int(round(power * randf_range(0.85, 1.15) * (1.75 if critical else 1.0)))
+    var current_hp := int(closest.get_meta("hp", 1)) - damage
+    closest.set_meta("hp", current_hp)
+    total_damage += damage
+    _message("Coup critique ! %d dégâts" % damage if critical else "%d dégâts" % damage)
+    if current_hp <= 0:
+        _defeat_enemy(closest)
+
+func _input_attack(event: InputEvent) -> void:
+    if event.is_action_pressed("attack"):
+        _attack()
 
 func _defeat_enemy(enemy: Node3D) -> void:
-    var enemy_level := int(enemy.get_meta("level"))
-    var reward_xp := 18 + enemy_level * 7
-    var reward_gold := 5 + enemy_level * 3
-    xp += reward_xp
-    gold += reward_gold
-    kills += 1
+    var enemy_level := int(enemy.get_meta("level", 1))
+    xp += 18 + enemy_level * 7
+    gold += 5 + enemy_level * 3
     power += 1.5 + enemy_level * 0.12
-    total_damage += int(power)
-    _message("Victoire · +%d XP · +%d or" % [reward_xp, reward_gold])
-    enemy.queue_free()
+    kills += 1
     enemies.erase(enemy)
+    enemy.queue_free()
+    _check_level_up()
+    _update_frontier()
 
+func _check_level_up() -> void:
     while xp >= XP_PER_LEVEL:
         xp -= XP_PER_LEVEL
         level += 1
         max_hp += 12 + reborn * 2
         hp = max_hp
         power += 8 + reborn * 2
-        _message("Niveau %d atteint" % level)
-        if level % 5 == 0:
-            _update_frontier()
+        _message("Niveau %d ! Puissance augmentée." % level)
 
-func _player_defeated() -> void:
-    level = 0
-    xp = 0.0
-    power = 25.0
-    max_hp = 100.0
-    hp = max_hp
-    player.velocity = Vector3.ZERO
-    player.position = Vector3(0, 1.0, 0)
+func _handle_defeat() -> void:
     for enemy in enemies:
-        if is_instance_valid(enemy):
+        if enemy != null and is_instance_valid(enemy):
             enemy.queue_free()
     enemies.clear()
+    level = 1
+    xp = 0.0
+    power = 25 + reborn * 12
+    max_hp = 100 + reborn * 15
+    hp = max_hp
+    player.position = Vector3(0, 1.0, 0)
     _update_frontier()
-    _apply_zone_visuals()
-    _message("Défaite · retour niveau 0 · progression de test réinitialisée")
-    _save()
-    _refresh_hud()
+    _spawn_initial_enemies()
+    _message("Tu as été vaincu. Nouvelle tentative.")
+    _save_game()
 
-func _spawn_loop(delta: float) -> void:
-    spawn_timer += delta
-    if spawn_timer >= 4.0:
-        spawn_timer = 0
-        if enemies.size() < MAX_ENEMIES:
-            _spawn_enemy()
-
-func _update_frontier() -> void:
-    var average := (level + group_levels_average()) / 2.0
-    frontier_min = max(1, int(floor(average)))
-    frontier_max = frontier_min + 4
-    zone_index = clamp(int(level / 10), 0, zone_names.size() - 1)
-
-func group_levels_average() -> float:
-    return float(level + max(1, level - 1) + level + 1) / 3.0
-
-func _apply_zone_visuals() -> void:
-    var world_ground := get_node_or_null("WorldGround/MeshInstance3D")
-    if world_ground:
-        var mat := world_ground.material_override as StandardMaterial3D
-        if mat:
-            mat.albedo_color = zone_colors[zone_index]
-
-func _reborn() -> void:
+func _do_reborn() -> void:
     if level < REBORN_LEVEL:
-        _message("Reborn disponible au niveau %d." % REBORN_LEVEL)
         return
     reborn += 1
     level = 1
-    xp = 0
+    xp = 0.0
     power = 25 + reborn * 12
     max_hp = 100 + reborn * 15
     hp = max_hp
     gold += 100 + reborn * 50
     _update_frontier()
-    _apply_zone_visuals()
-    _message("REBORN %d · bonus permanent obtenu" % reborn)
-    _save()
+    for enemy in enemies:
+        if enemy != null and is_instance_valid(enemy):
+            enemy.queue_free()
+    enemies.clear()
+    _spawn_initial_enemies()
+    _message("REBORN %d ! La frontière s'étend." % reborn)
+    _save_game()
 
-func _build_hud() -> void:
-    var layer := CanvasLayer.new()
-    layer.name = "HUD"
-    add_child(layer)
+func _update_frontier() -> void:
+    var group_average := (level + max(1, level - 1) + level + 1) / 3.0
+    var average := (level + group_average) / 2.0
+    frontier_min = max(1, int(floor(average)))
+    frontier_max = frontier_min + 4
+    zone_index = min(max(int(floor(level / 10.0)), 0), zone_names.size() - 1)
 
-    var top := PanelContainer.new()
-    top.position = Vector2(18, 16)
-    top.size = Vector2(560, 112)
-    top.add_theme_stylebox_override("panel", _panel(Color("#0b1020dd")))
-    layer.add_child(top)
-    var box := VBoxContainer.new()
-    box.add_theme_constant_override("separation", 4)
-    top.add_child(box)
+func _apply_zone_visuals() -> void:
+    var env_node := get_node_or_null("WorldEnvironment")
+    if env_node is WorldEnvironment and env_node.environment != null:
+        env_node.environment.background_color = zone_colors[zone_index]
 
-    level_label = _label("NIVEAU 1 · REBORN 0", 20, Color("#f0f2ff"))
-    box.add_child(level_label)
-    hp_label = _label("PV", 12, Color("#e98ba4"))
-    box.add_child(hp_label)
-    xp_label = _label("XP", 12, Color("#bca5ff"))
-    box.add_child(xp_label)
-    stats_label = _label("", 11, Color("#a5aec9"))
-    box.add_child(stats_label)
-
-    var zone_panel := PanelContainer.new()
-    zone_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-    zone_panel.position = Vector2(-388, 16)
-    zone_panel.size = Vector2(370, 94)
-    zone_panel.add_theme_stylebox_override("panel", _panel(Color("#0b1020dd")))
-    layer.add_child(zone_panel)
-    var zone_box := VBoxContainer.new()
-    zone_panel.add_child(zone_box)
-    zone_label = _label("", 18, Color("#f0f2ff"))
-    zone_box.add_child(zone_label)
-    combat_label = _label("Explore pour rencontrer des ennemis.\nESPACE / clic gauche : attaquer", 11, Color("#55dfa0"))
-    zone_box.add_child(combat_label)
-
-    crosshair = _label("+", 24, Color("#f0f2ff"))
-    crosshair.set_anchors_preset(Control.PRESET_CENTER)
-    crosshair.position = Vector2(-8, -16)
-    crosshair.size = Vector2(20, 32)
-    layer.add_child(crosshair)
-
-    hint_label = _label("WASD : se déplacer   •   Souris : caméra   •   Espace/clic : attaquer   •   Échap : libérer la souris", 11, Color("#c1c8df"))
-    hint_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-    hint_label.position = Vector2(18, -48)
-    hint_label.size = Vector2(1100, 30)
-    layer.add_child(hint_label)
-
-    message_label = _label("", 13, Color("#e7ddff"))
-    message_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-    message_label.position = Vector2(-300, -90)
-    message_label.size = Vector2(600, 36)
-    message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    layer.add_child(message_label)
-
-    reborn_button = Button.new()
-    reborn_button.text = "REBORN"
-    reborn_button.position = Vector2(18, 138)
-    reborn_button.size = Vector2(140, 42)
-    reborn_button.pressed.connect(_reborn)
-    layer.add_child(reborn_button)
-
-func _label(text: String, size: int, color: Color) -> Label:
-    var label := Label.new()
-    label.text = text
-    label.add_theme_font_size_override("font_size", size)
-    label.add_theme_color_override("font_color", color)
-    return label
-
-func _panel(color: Color) -> StyleBoxFlat:
-    var style := StyleBoxFlat.new()
-    style.bg_color = color
-    style.border_color = Color("#2d3858")
-    style.set_border_width_all(1)
-    style.set_corner_radius_all(12)
-    style.content_margin_left = 12
-    style.content_margin_right = 12
-    style.content_margin_top = 9
-    style.content_margin_bottom = 9
-    return style
-
-func _refresh_hud() -> void:
-    if not player:
+func _update_camera() -> void:
+    if camera_pivot == null or player == null:
         return
-    level_label.text = "NIVEAU %d · REBORN %d" % [level, reborn]
-    hp_label.text = "PV  %d / %d" % [max(0, int(hp)), int(max_hp)]
-    xp_label.text = "XP  %d / %d" % [int(xp), int(XP_PER_LEVEL)]
-    stats_label.text = "Puissance %d · Or %d · Kills %d" % [int(power), gold, kills]
-    zone_label.text = "%s · %s" % [zone_names[zone_index], zone_biomes[zone_index]]
-    reborn_button.disabled = level < REBORN_LEVEL
-
-func _message(text: String) -> void:
-    last_message = text
-    if message_label:
-        message_label.text = text
+    camera_pivot.global_position = player.global_position + Vector3(0, 1.5, 0)
 
 func _autosave(delta: float) -> void:
-    autosave_timer += delta
-    if autosave_timer >= 10.0:
-        autosave_timer = 0
-        _save()
+    autosave_timer -= delta
+    if autosave_timer <= 0.0:
+        autosave_timer = 10.0
+        _save_game()
 
-func _save() -> void:
+func _save_game() -> void:
+    var save_path := "user://infinite_ascension_save.json"
     var data := {
         "level": level,
         "xp": xp,
@@ -559,16 +541,17 @@ func _save() -> void:
         "kills": kills,
         "total_damage": total_damage
     }
-    var file := FileAccess.open("user://infinite_ascension_save.json", FileAccess.WRITE)
-    if file:
+    var file := FileAccess.open(save_path, FileAccess.WRITE)
+    if file != null:
         file.store_string(JSON.stringify(data))
         file.close()
 
 func _load_save() -> void:
-    if not FileAccess.file_exists("user://infinite_ascension_save.json"):
+    var save_path := "user://infinite_ascension_save.json"
+    if not FileAccess.file_exists(save_path):
         return
-    var file := FileAccess.open("user://infinite_ascension_save.json", FileAccess.READ)
-    if not file:
+    var file := FileAccess.open(save_path, FileAccess.READ)
+    if file == null:
         return
     var parsed = JSON.parse_string(file.get_as_text())
     file.close()

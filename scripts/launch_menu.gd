@@ -7,6 +7,7 @@ const TEXT_COLOR := Color("#f2efff")
 const MUTED_COLOR := Color("#9ea8c7")
 
 var menu_root: Control
+var menu_cursor: Control
 var continue_button: Button
 var new_game_button: Button
 var quit_button: Button
@@ -120,9 +121,9 @@ func _build_menu() -> void:
 
     var cursor_script := load("res://scripts/menu_cursor.gd")
     if cursor_script != null:
-        var cursor := Control.new()
-        cursor.set_script(cursor_script)
-        add_child(cursor)
+        menu_cursor = Control.new()
+        menu_cursor.set_script(cursor_script)
+        add_child(menu_cursor)
 
 func _button(text_value: String) -> Button:
     var button := Button.new()
@@ -174,4 +175,6 @@ func _quit_game() -> void:
 func _close_menu() -> void:
     get_tree().paused = false
     Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+    if menu_cursor != null:
+        menu_cursor.queue_free()
     menu_root.queue_free()

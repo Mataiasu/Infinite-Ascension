@@ -228,7 +228,6 @@ func _build_player() -> void:
     player.add_child(light)
 
 func _build_camera() -> void:
-    # Independent camera rig: Player rotation can never rotate the camera.
     camera_pivot = Node3D.new()
     camera_pivot.name = "CameraPivot"
     add_child(camera_pivot)
@@ -251,20 +250,7 @@ func _move_player(delta: float) -> void:
     if player == null or not is_instance_valid(player) or camera_pivot == null:
         return
 
-    # Godot's standard InputMap movement. Keyboard input moves the player only.
-    var direction := Vector3.ZERO
-    if Input.is_action_pressed("move_right"):
-        direction.x += 1.0
-    if Input.is_action_pressed("move_left"):
-        direction.x -= 1.0
-    if Input.is_action_pressed("move_back"):
-        direction.z += 1.0
-    if Input.is_action_pressed("move_forward"):
-        direction.z -= 1.0
-    if direction != Vector3.ZERO:
-        direction = direction.normalized()
-
-    # Camera-relative movement without rotating either the Player or the camera from keyboard input.
+    var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
     var forward := -camera_pivot.global_transform.basis.z
     var right := camera_pivot.global_transform.basis.x
     forward.y = 0.0
@@ -274,7 +260,7 @@ func _move_player(delta: float) -> void:
     if right.length_squared() > 0.001:
         right = right.normalized()
 
-    var world_direction := right * direction.x + forward * direction.z
+    var world_direction := right * input_vector.x + forward * input_vector.y
     if world_direction.length_squared() > 1.0:
         world_direction = world_direction.normalized()
 
@@ -387,6 +373,7 @@ func _defeat_enemy(enemy: Node3D) -> void:
     gold += reward_gold
     kills += 1
     power += 1.5 + enemy_level * 0.12
+    total_damage += int(power)
     _message("Victoire · +%d XP · +%d or" % [reward_xp, reward_gold])
     enemy.queue_free()
     enemies.erase(enemy)
@@ -409,6 +396,10 @@ func _player_defeated() -> void:
     hp = max_hp
     player.velocity = Vector3.ZERO
     player.position = Vector3(0, 1.0, 0)
+    for enemy in enemies:
+        if is_instance_valid(enemy):
+            enemy.queue_free()
+    enemies.clear()
     _update_frontier()
     _apply_zone_visuals()
     _message("Défaite · retour niveau 0 · progression de test réinitialisée")

@@ -506,8 +506,8 @@ func _do_reborn() -> void:
     _save_game()
 
 func _update_frontier() -> void:
-    var group_average := (level + max(1, level - 1) + level + 1) / 3.0
-    var average := (level + group_average) / 2.0
+    var group_average: float = (level + max(1, level - 1) + level + 1) / 3.0
+    var average: float = (level + group_average) / 2.0
     frontier_min = max(1, int(floor(average)))
     frontier_max = frontier_min + 4
     zone_index = min(max(int(floor(level / 10.0)), 0), zone_names.size() - 1)

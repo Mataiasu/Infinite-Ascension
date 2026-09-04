@@ -8,12 +8,12 @@ func _ready() -> void:
     process_mode = Node.PROCESS_MODE_ALWAYS
     mouse_filter = Control.MOUSE_FILTER_IGNORE
     set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
     queue_redraw()
 
 func _process(_delta: float) -> void:
-    position = get_viewport().get_mouse_position()
-    queue_redraw()
+    if visible:
+        position = get_viewport().get_mouse_position()
+        queue_redraw()
 
 func _draw() -> void:
     var points := PackedVector2Array([

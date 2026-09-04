@@ -118,6 +118,12 @@ func _build_menu() -> void:
     version.add_theme_color_override("font_color", Color("#68718c"))
     box.add_child(version)
 
+    var cursor_script := load("res://scripts/menu_cursor.gd")
+    if cursor_script != null:
+        var cursor := Control.new()
+        cursor.set_script(cursor_script)
+        add_child(cursor)
+
 func _button(text_value: String) -> Button:
     var button := Button.new()
     button.text = text_value

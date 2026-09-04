@@ -32,7 +32,7 @@ func _set_open(value: bool) -> void:
         options_panel.visible = value and options_panel.visible
     get_tree().paused = value
     if value:
-        Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+        Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
     else:
         Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
@@ -88,6 +88,12 @@ func _build_ui() -> void:
     box.add_child(hint)
 
     _build_options()
+
+    var cursor_script := load("res://scripts/menu_cursor.gd")
+    if cursor_script != null:
+        var cursor := Control.new()
+        cursor.set_script(cursor_script)
+        add_child(cursor)
 
 func _build_options() -> void:
     options_panel = PanelContainer.new()

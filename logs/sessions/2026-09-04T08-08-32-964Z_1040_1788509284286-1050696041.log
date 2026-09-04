@@ -1,0 +1,8 @@
+{"data":{"build":"104.0","log_path":"C:\\Users\\Mat\\AppData\\Local/InfiniteAscension/Logs/game.log","platform":"Windows","session":"1788509284.286-1050696041"},"event":"GAME_START","ts":"2026-09-04 08:08:04"}
+{"data":{"cooldown":0.55,"range":6.0},"event":"ACTIVE_ATTACK_READY","ts":"2026-09-04 08:08:04"}
+{"data":{"reason":"no_target"},"event":"ACTIVE_ATTACK_MISS","ts":"2026-09-04 08:08:19"}
+{"data":{"critical":false,"damage":23,"remaining_hp":127.0,"target":"Ravager"},"event":"ACTIVE_ATTACK","ts":"2026-09-04 08:08:29"}
+{"data":{"critical":false,"damage":23,"remaining_hp":104.0,"target":"Ravager"},"event":"ACTIVE_ATTACK","ts":"2026-09-04 08:08:29"}
+{"data":{"critical":false,"damage":23,"remaining_hp":81.0,"target":"Ravager"},"event":"ACTIVE_ATTACK","ts":"2026-09-04 08:08:30"}
+{"data":{"reason":"no_target"},"event":"ACTIVE_ATTACK_MISS","ts":"2026-09-04 08:08:31"}
+{"data":{"reason":"no_target"},"event":"ACTIVE_ATTACK_MISS","ts":"2026-09-04 08:08:32"}

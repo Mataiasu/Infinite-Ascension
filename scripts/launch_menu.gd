@@ -10,23 +10,28 @@ var menu_root: Control
 var continue_button: Button
 var new_game_button: Button
 var quit_button: Button
-var runtime: Node
 
 func _ready() -> void:
     process_mode = Node.PROCESS_MODE_WHEN_PAUSED
     layer = 100
-    runtime = get_parent()
     _build_menu()
-    _lock_runtime_while_menu_is_open()
     get_tree().paused = true
     Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+    call_deferred("_lock_runtime_while_menu_is_open")
 
 func _lock_runtime_while_menu_is_open() -> void:
-    if runtime != null and is_instance_valid(runtime):
-        # The gameplay runtime previously used PROCESS_MODE_ALWAYS. Force it
-        # completely disabled while the launch menu is visible so keyboard,
-        # mouse input, physics, enemies and timers cannot run behind the menu.
+    var runtime := get_parent()
+    if runtime != null:
         runtime.process_mode = Node.PROCESS_MODE_DISABLED
+        runtime.set_process(false)
+        runtime.set_physics_process(false)
+
+func _unlock_runtime() -> void:
+    var runtime := get_parent()
+    if runtime != null:
+        runtime.process_mode = Node.PROCESS_MODE_PAUSABLE
+        runtime.set_process(true)
+        runtime.set_physics_process(true)
 
 func _build_menu() -> void:
     menu_root = Control.new()
@@ -144,13 +149,11 @@ func _button_style(background: Color) -> StyleBoxFlat:
     return style
 
 func _continue_game() -> void:
-    if runtime != null and is_instance_valid(runtime):
-        runtime.process_mode = Node.PROCESS_MODE_PAUSABLE
-    get_tree().paused = false
-    Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-    menu_root.queue_free()
+    _unlock_runtime()
+    _close_menu()
 
 func _new_game() -> void:
+    _unlock_runtime()
     var save_path := "user://infinite_ascension_save.json"
     if FileAccess.file_exists(save_path):
         DirAccess.remove_absolute(save_path)
@@ -158,8 +161,11 @@ func _new_game() -> void:
     get_tree().reload_current_scene()
 
 func _quit_game() -> void:
+    _unlock_runtime()
     get_tree().paused = false
     get_tree().quit()
 
 func _close_menu() -> void:
-    _continue_game()
+    get_tree().paused = false
+    Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+    menu_root.queue_free()

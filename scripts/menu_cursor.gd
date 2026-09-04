@@ -7,7 +7,10 @@ const SIZE := 18.0
 func _ready() -> void:
     process_mode = Node.PROCESS_MODE_ALWAYS
     mouse_filter = Control.MOUSE_FILTER_IGNORE
-    set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    anchors_preset = Control.PRESET_TOP_LEFT
+    position = get_viewport().get_mouse_position()
+    size = Vector2(SIZE + 2.0, SIZE + 2.0)
+    Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
     queue_redraw()
 
 func _process(_delta: float) -> void:

@@ -8,6 +8,7 @@ var menu: PanelContainer
 var options_panel: PanelContainer
 var fullscreen_check: CheckButton
 var volume_slider: HSlider
+var menu_cursor: Control
 var is_open := false
 
 func _ready() -> void:
@@ -30,6 +31,8 @@ func _set_open(value: bool) -> void:
         overlay.visible = value
     if options_panel:
         options_panel.visible = value and options_panel.visible
+    if menu_cursor:
+        menu_cursor.visible = value
     get_tree().paused = value
     if value:
         Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
@@ -91,9 +94,10 @@ func _build_ui() -> void:
 
     var cursor_script := load("res://scripts/menu_cursor.gd")
     if cursor_script != null:
-        var cursor := Control.new()
-        cursor.set_script(cursor_script)
-        add_child(cursor)
+        menu_cursor = Control.new()
+        menu_cursor.set_script(cursor_script)
+        menu_cursor.visible = false
+        add_child(menu_cursor)
 
 func _build_options() -> void:
     options_panel = PanelContainer.new()

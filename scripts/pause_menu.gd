@@ -3,12 +3,13 @@ extends CanvasLayer
 # In-game pause menu. Works independently from game_runtime so it remains available
 # even while the gameplay tree is paused.
 
+const CURSOR_PATH := "res://assets/ui/menu_cursor.svg"
+
 var overlay: ColorRect
 var menu: PanelContainer
 var options_panel: PanelContainer
 var fullscreen_check: CheckButton
 var volume_slider: HSlider
-var menu_cursor: Control
 var is_open := false
 
 func _ready() -> void:
@@ -31,13 +32,21 @@ func _set_open(value: bool) -> void:
         overlay.visible = value
     if options_panel:
         options_panel.visible = value and options_panel.visible
-    if menu_cursor:
-        menu_cursor.visible = value
     get_tree().paused = value
     if value:
-        Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
+        _show_menu_cursor()
     else:
+        _hide_menu_cursor()
         Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _show_menu_cursor() -> void:
+    Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+    var cursor_texture := load(CURSOR_PATH)
+    if cursor_texture is Texture2D:
+        Input.set_custom_mouse_cursor(cursor_texture, Input.CURSOR_ARROW, Vector2(3, 3))
+
+func _hide_menu_cursor() -> void:
+    Input.set_custom_mouse_cursor(null, Input.CURSOR_ARROW)
 
 func _build_ui() -> void:
     overlay = ColorRect.new()
@@ -91,13 +100,6 @@ func _build_ui() -> void:
     box.add_child(hint)
 
     _build_options()
-
-    var cursor_script := load("res://scripts/menu_cursor.gd")
-    if cursor_script != null:
-        menu_cursor = Control.new()
-        menu_cursor.set_script(cursor_script)
-        menu_cursor.visible = false
-        add_child(menu_cursor)
 
 func _build_options() -> void:
     options_panel = PanelContainer.new()
@@ -156,6 +158,7 @@ func _set_volume(value: float) -> void:
 
 func _quit_game() -> void:
     get_tree().paused = false
+    _hide_menu_cursor()
     _log("GAME_QUIT_FROM_MENU", {})
     get_tree().quit()
 
